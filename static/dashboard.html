@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sovereign — Organism Dashboard</title>
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --card: #111827;
+            --border: #1e293b;
+            --text: #e2e8f0;
+            --dim: #64748b;
+            --teal: #14b8a6;
+            --amber: #f59e0b;
+            --red: #ef4444;
+            --green: #22c55e;
+            --purple: #8b5cf6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--teal);
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: var(--dim);
+            font-size: 0.85rem;
+            margin-bottom: 24px;
+        }
+
+        .pulse-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s ease-in-out infinite;
+            margin-right: 6px;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.4;
+                transform: scale(0.8);
+            }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: border-color 0.2s;
+        }
+
+        .card:hover {
+            border-color: var(--teal);
+        }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--dim);
+            margin-bottom: 12px;
+        }
+
+        .big-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--teal);
+            line-height: 1;
+        }
+
+        .big-label {
+            font-size: 0.8rem;
+            color: var(--dim);
+            margin-top: 4px;
+        }
+
+        .meter {
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .meter-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.6s ease;
+        }
+
+        .meter-fill.green {
+            background: var(--green);
+        }
+
+        .meter-fill.amber {
+            background: var(--amber);
+        }
+
+        .meter-fill.red {
+            background: var(--red);
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 0.85rem;
+        }
+
+        .stat-label {
+            color: var(--dim);
+        }
+
+        .stat-value {
+            font-weight: 600;
+        }
+
+        .hand-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 6px;
+        }
+
+        .hand-pill {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--teal);
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .hand-pill:hover {
+            background: var(--teal);
+            color: var(--bg);
+        }
+
+        .feeling {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 0.8rem;
+        }
+
+        .feeling-icon {
+            font-size: 1rem;
+        }
+
+        .state-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .state-awake {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--green);
+        }
+
+        .state-idle {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--amber);
+        }
+
+        .state-resting {
+            background: rgba(139, 92, 246, 0.15);
+            color: var(--purple);
+        }
+
+        .state-dreaming {
+            background: rgba(139, 92, 246, 0.15);
+            color: var(--purple);
+        }
+
+        .state-deep_sleep {
+            background: rgba(100, 116, 139, 0.15);
+            color: var(--dim);
+        }
+
+        .state-waking {
+            background: rgba(20, 184, 166, 0.15);
+            color: var(--teal);
+        }
+
+        .footer {
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.75rem;
+            padding-top: 16px;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <h1>🐙 Sovereign Dashboard</h1>
+    <p class="subtitle"><span class="pulse-dot" id="pulseDot"></span> <span id="statusLine">Connecting...</span></p>
+
+    <div class="grid">
+        <!-- Heartbeat -->
+        <div class="card">
+            <div class="card-title">💓 Heartbeat</div>
+            <div class="big-value" id="pulseCount">—</div>
+            <div class="big-label">beats</div>
+            <div style="margin-top: 12px">
+                <div class="stat-row">
+                    <span class="stat-label">State</span>
+                    <span id="stateTag" class="state-badge state-awake">—</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Idle</span>
+                    <span class="stat-value" id="idleTime">—</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Uptime</span>
+                    <span class="stat-value" id="uptime">—</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Body -->
+        <div class="card">
+            <div class="card-title">💪 Body</div>
+            <div>
+                <div class="stat-row">
+                    <span class="stat-label">CPU</span>
+                    <span class="stat-value" id="cpuVal">—</span>
+                </div>
+                <div class="meter">
+                    <div class="meter-fill green" id="cpuBar" style="width:0%"></div>
+                </div>
+
+                <div class="stat-row">
+                    <span class="stat-label">RAM</span>
+                    <span class="stat-value" id="ramVal">—</span>
+                </div>
+                <div class="meter">
+                    <div class="meter-fill green" id="ramBar" style="width:0%"></div>
+                </div>
+
+                <div class="stat-row">
+                    <span class="stat-label">Disk</span>
+                    <span class="stat-value" id="diskVal">—</span>
+                </div>
+                <div class="meter">
+                    <div class="meter-fill green" id="diskBar" style="width:0%"></div>
+                </div>
+            </div>
+            <div id="feelings" style="margin-top: 8px"></div>
+        </div>
+
+        <!-- Memory -->
+        <div class="card">
+            <div class="card-title">🧠 Memory</div>
+            <div class="big-value" id="memoryCount">—</div>
+            <div class="big-label">total memories</div>
+        </div>
+    </div>
+
+    <!-- Hands -->
+    <div class="card" style="margin-bottom: 24px">
+        <div class="card-title">🤚 Hands — <span id="handCount">0</span> Registered</div>
+        <div class="hand-grid" id="handGrid"></div>
+    </div>
+
+    <div class="footer">Auto-refreshes every 5s · Sovereign Organism v1</div>
+
+    <script>
+        function meterColor(pct) {
+            if (pct > 90) return 'red';
+            if (pct > 70) return 'amber';
+            return 'green';
+        }
+
+        function formatIdle(seconds) {
+            if (seconds < 60) return Math.round(seconds) + 's';
+            if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+            return (seconds / 3600).toFixed(1) + 'h';
+        }
+
+        function formatUptime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return h > 0 ? `${h}h ${m}m` : `${m}m`;
+        }
+
+        const stateIcons = {
+            waking: '🌅', awake: '🟢', idle: '🟡',
+            resting: '😴', dreaming: '💤', deep_sleep: '🌑'
+        };
+
+        async function refresh() {
+            try {
+                const res = await fetch('/api/status');
+                const d = await res.json();
+
+                // Status line
+                const state = d.heartbeat?.state || 'unknown';
+                document.getElementById('statusLine').textContent =
+                    `${state} · pulse ${d.heartbeat?.pulse_count || 0} · uptime ${formatUptime(d.uptime_seconds)}`;
+                document.getElementById('pulseDot').style.background =
+                    state === 'awake' ? '#22c55e' : state === 'idle' ? '#f59e0b' : '#8b5cf6';
+
+                // Heartbeat
+                document.getElementById('pulseCount').textContent = d.heartbeat?.pulse_count ?? '—';
+                const tag = document.getElementById('stateTag');
+                tag.textContent = `${stateIcons[state] || '❓'} ${state}`;
+                tag.className = `state-badge state-${state}`;
+                document.getElementById('idleTime').textContent = formatIdle(d.heartbeat?.idle_seconds || 0);
+                document.getElementById('uptime').textContent = formatUptime(d.uptime_seconds);
+
+                // Body
+                const cpu = d.body?.cpu_percent || 0;
+                const ram = d.body?.memory_percent || 0;
+                const disk = d.body?.disk_percent || 0;
+
+                document.getElementById('cpuVal').textContent = cpu.toFixed(0) + '%';
+                document.getElementById('cpuBar').style.width = cpu + '%';
+                document.getElementById('cpuBar').className = `meter-fill ${meterColor(cpu)}`;
+
+                document.getElementById('ramVal').textContent = ram.toFixed(0) + '%';
+                document.getElementById('ramBar').style.width = ram + '%';
+                document.getElementById('ramBar').className = `meter-fill ${meterColor(ram)}`;
+
+                document.getElementById('diskVal').textContent =
+                    `${disk.toFixed(0)}% (${d.body?.disk_free_gb?.toFixed(1) || '?'} GB free)`;
+                document.getElementById('diskBar').style.width = disk + '%';
+                document.getElementById('diskBar').className = `meter-fill ${meterColor(disk)}`;
+
+                // Feelings
+                const feelDiv = document.getElementById('feelings');
+                feelDiv.innerHTML = '';
+                for (const f of (d.body?.feelings || [])) {
+                    const icon = f.level === 'critical' ? '🔴' : f.level === 'strained' ? '🟡' : '🟢';
+                    feelDiv.innerHTML += `<div class="feeling"><span class="feeling-icon">${icon}</span>${f.desc}</div>`;
+                }
+
+                // Memory
+                document.getElementById('memoryCount').textContent = d.memory?.total ?? '—';
+
+                // Hands
+                document.getElementById('handCount').textContent = d.hands?.total || 0;
+                const grid = document.getElementById('handGrid');
+                grid.innerHTML = '';
+                for (const name of (d.hands?.registered || [])) {
+                    grid.innerHTML += `<div class="hand-pill">${name}</div>`;
+                }
+
+            } catch (e) {
+                document.getElementById('statusLine').textContent = 'Connection lost — retrying...';
+                document.getElementById('pulseDot').style.background = '#ef4444';
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+
+</html>

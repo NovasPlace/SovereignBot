@@ -469,6 +469,11 @@ async def main() -> None:
     agent._hand_router = hand_router
 
     channel._resolve_fn = agent.resolve_approval
+    # Wire organism introspection for /commands
+    channel._heartbeat = heartbeat
+    channel._hands_dict = hands
+    channel._store = store
+    channel._proprioception = proprioception
 
     # ── Part 9: Voice Layer ────────────────────────────────────────────────────
     from .voice import EarSystem, VoiceSystem
@@ -519,13 +524,30 @@ async def main() -> None:
     heartbeat.register_phase(_economy_pulse)
     log.info("Economy engine ready (Scout/Bid/Execute/Deliver)")
 
+    # ── Status Dashboard ───────────────────────────────────────────────────────
+    from . import dashboard as dash_mod
+    dash_mod.wire(
+        heartbeat=heartbeat,
+        proprioception=proprioception,
+        hands=hands,
+        store=store,
+    )
+    asyncio.ensure_future(dash_mod.start_dashboard(port=8800))
+    log.info("Status dashboard ready (http://localhost:8800)")
+
+    # ── Cross-Hand Chaining ───────────────────────────────────────────────────
+    from .hand_chain import HandChainExecutor
+    chain_executor = HandChainExecutor(hands=hands, send_fn=send_fn)
+    agent._chain_executor = chain_executor
+    log.info("Hand chain executor ready (%d chains)", len(chain_executor.available_chains))
+
     # ── Connect and run ────────────────────────────────────────────────────────
     await channel.connect()
     heartbeat.start()  # the organism is now alive
     log.info(
         "Sovereign online — session=%s skills=%d "
         "organs=[IonicHalo,TRACE,Spectra,Heartbeat,Soul,Dreams,TaskQueue,"
-        "Senses,Immune,Voice,Economy]",
+        "Senses,Immune,Voice,Economy,Dashboard,Chains]",
         session_id, len(installed),
     )
 

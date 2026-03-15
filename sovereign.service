@@ -1,0 +1,25 @@
+[Unit]
+Description=Sovereign Bot — Autonomous AI Organism
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=frost
+WorkingDirectory=/home/frost/Desktop/Agent_System
+EnvironmentFile=/home/frost/Desktop/Agent_System/sovereign/.env
+ExecStart=/home/frost/Desktop/Agent_System/sovereign/.venv/bin/python -m sovereign.daemon
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sovereign
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/frost/Desktop/Agent_System /tmp/sovereign
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

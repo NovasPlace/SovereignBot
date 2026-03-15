@@ -47,6 +47,11 @@ class TelegramAdapter(ChannelAdapter):
         self._resolve_fn = agent_resolve_fn
         self._application = None
         self._message_queue: asyncio.Queue[IncomingMessage] = asyncio.Queue()
+        # Organism introspection — wired by daemon after init
+        self._heartbeat = None
+        self._hands_dict = None
+        self._store = None
+        self._proprioception = None
 
     async def connect(self) -> None:
         try:
@@ -83,6 +88,13 @@ class TelegramAdapter(ChannelAdapter):
 
         # Route inline button callbacks (approval gate responses)
         app.add_handler(CallbackQueryHandler(self._on_callback))
+
+        # ── Telegram /commands ────────────────────────────────────────
+        app.add_handler(CommandHandler("start", self._cmd_start))
+        app.add_handler(CommandHandler("help", self._cmd_help))
+        app.add_handler(CommandHandler("status", self._cmd_status))
+        app.add_handler(CommandHandler("hands", self._cmd_hands))
+        app.add_handler(CommandHandler("memory", self._cmd_memory))
 
         await app.initialize()
         await app.start()
@@ -280,3 +292,149 @@ class TelegramAdapter(ChannelAdapter):
             await query.edit_message_text(f"{icon} — action `{action_id}`")
         except Exception:
             pass
+
+    # ── /commands ────────────────────────────────────────────────────────
+
+    def _check_user(self, update) -> bool:
+        """Check if the user is allowed."""
+        if self._allowed is None:
+            return True
+        user_id = update.effective_user.id if update.effective_user else None
+        return user_id in self._allowed
+
+    async def _cmd_start(self, update, context) -> None:
+        """Welcome message when user starts the bot."""
+        if not self._check_user(update):
+            return
+        await update.message.reply_text(
+            "🐙 *Sovereign Bot — Online*\n\n"
+            "I'm your autonomous AI organism. I think, I work, I learn.\n\n"
+            "Just talk to me naturally, or use commands:\n"
+            "/status — organism vitals\n"
+            "/hands — my 25 work pipelines\n"
+            "/memory — memory stats\n"
+            "/help — all commands",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_help(self, update, context) -> None:
+        """/help — list all commands."""
+        if not self._check_user(update):
+            return
+        await update.message.reply_text(
+            "🐙 *Sovereign Commands*\n\n"
+            "/status — heartbeat, state, body vitals\n"
+            "/hands — list all 25 autonomous work pipelines\n"
+            "/memory — memory statistics\n"
+            "/help — this message\n\n"
+            "Or just talk to me — I route tasks to the right hand automatically.",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_status(self, update, context) -> None:
+        """/status — organism vitals."""
+        if not self._check_user(update):
+            return
+
+        lines = ["🐙 *Sovereign Status*\n"]
+
+        # Heartbeat
+        if self._heartbeat:
+            s = self._heartbeat.status()
+            state_icons = {
+                "waking": "🌅", "awake": "🟢", "idle": "🟡",
+                "resting": "😴", "dreaming": "💤", "deep_sleep": "🌑",
+            }
+            icon = state_icons.get(s.get("state", ""), "❓")
+            lines.append(f"*State:* {icon} {s.get('state', '?')}")
+            lines.append(f"*Pulse:* {s.get('pulse_count', 0)} beats")
+            idle = s.get("idle_seconds", 0)
+            if idle < 60:
+                lines.append(f"*Idle:* {idle:.0f}s")
+            elif idle < 3600:
+                lines.append(f"*Idle:* {idle / 60:.0f}m")
+            else:
+                lines.append(f"*Idle:* {idle / 3600:.1f}h")
+            lines.append(f"*Phases:* {s.get('phases_registered', 0)}")
+
+        # Body (proprioception)
+        if self._proprioception:
+            try:
+                body = self._proprioception.body_state
+                lines.append(f"\n💪 *Body*")
+                lines.append(f"CPU: {body.cpu_percent:.0f}%")
+                lines.append(f"RAM: {body.memory_percent:.0f}%")
+                lines.append(f"Disk: {body.disk_percent:.0f}% ({body.disk_free_gb:.1f} GB free)")
+                if body.feelings:
+                    for f in body.feelings[:3]:
+                        lines.append(f"  ⚡ {f.description}")
+            except Exception:
+                pass
+
+        # Hands count
+        if self._hands_dict:
+            lines.append(f"\n🤚 *Hands:* {len(self._hands_dict)} registered")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_hands(self, update, context) -> None:
+        """/hands — list all registered hands."""
+        if not self._check_user(update):
+            return
+
+        if not self._hands_dict:
+            await update.message.reply_text("No hands registered.")
+            return
+
+        categories = {
+            "⚙️ Engineering": [
+                "code_engineer", "api_builder", "debugger",
+                "test_engineer", "cicd", "performance",
+            ],
+            "📊 Data": ["data_analyst", "database", "scraper"],
+            "📡 Communication": ["email", "social_media", "meeting"],
+            "💼 Business": ["invoice", "competitive", "seo", "legal"],
+            "📦 Product": ["documentation", "design_system", "onboarding"],
+            "🔧 Operations": ["deployment", "sysadmin", "research", "writing"],
+        }
+
+        lines = ["🐙 *Sovereign Hands — 25 Autonomous Pipelines*\n"]
+        for cat_name, hand_keys in categories.items():
+            active = [k for k in hand_keys if k in self._hands_dict]
+            if active:
+                lines.append(f"\n{cat_name}")
+                for k in active:
+                    lines.append(f"  • `{k}`")
+
+        lines.append(
+            "\n_Talk to me naturally — I'll route to the right hand._"
+        )
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_memory(self, update, context) -> None:
+        """/memory — memory statistics."""
+        if not self._check_user(update):
+            return
+
+        lines = ["🧠 *Sovereign Memory*\n"]
+
+        if self._store:
+            try:
+                count = self._store.count_memories()
+                lines.append(f"*Total memories:* {count}")
+            except Exception:
+                lines.append("*Memory store:* connected")
+
+            try:
+                recent = self._store.recall("", limit=3)
+                if recent:
+                    lines.append("\n*Recent:*")
+                    for m in recent:
+                        preview = (m.content or "")[:60].replace("\n", " ")
+                        lines.append(f"  • {preview}...")
+            except Exception:
+                pass
+        else:
+            lines.append("Memory store not connected")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
