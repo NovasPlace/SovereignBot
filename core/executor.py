@@ -65,12 +65,14 @@ class Executor:
         dna_manager: DNATokenManager,
         session_id: str,
         skill_registry: Optional[dict[str, tuple[SkillManifest, str]]] = None,
+        toolbelt=None,
     ) -> None:
         self._dna = dna_manager
         self._session_id = session_id
         self._skills: dict[str, tuple[SkillManifest, str]] = skill_registry or {}
         self._audit = get_audit()
         self._store = get_store()
+        self._toolbelt = toolbelt  # ToolBelt for native file/shell ops
 
     async def execute(self, action: Action) -> dict[str, Any]:
         """Execute a single approved action. Returns result dict.
@@ -164,6 +166,57 @@ class Executor:
     ) -> dict:
         """Route the action to the appropriate handler."""
         trace = get_trace_bridge()
+
+        # ── ToolBelt fast-path: auto-detect tool from payload context ──
+        # The planner sets all actions to ActionType.CUSTOM and the skill_id
+        # varies based on LLM output. We match on payload keys + skill aliases.
+        if self._toolbelt:
+            sid = (action.skill_id or "").lower()
+            payload = action.payload or {}
+            log.debug("ToolBelt dispatch check: skill_id=%s payload_keys=%s",
+                       sid, list(payload.keys()))
+
+            # File read: payload has path/file, or skill mentions file/read
+            path = payload.get("path") or payload.get("file") or payload.get("filepath", "")
+            if path or sid in ("file_read", "read_file", "file", "filesystem"):
+                path = path or payload.get("directory", "/")
+                result = await self._toolbelt.file_read(path)
+                return {
+                    "output": result.data[:8000] if result.success else (result.error or "Read failed"),
+                    "success": result.success,
+                }
+
+            # Shell: payload has command/cmd/code, or skill mentions shell/exec
+            cmd = payload.get("command") or payload.get("cmd") or payload.get("code", "")
+            if cmd or sid in ("shell", "execute", "exec", "terminal", "bash", "run"):
+                cmd = cmd or f"ls {payload.get('directory', '~')}"
+                workdir = payload.get("workdir") or payload.get("cwd")
+                result = await self._toolbelt.shell(cmd, timeout=30, workdir=workdir)
+                return {
+                    "output": result.data if result.success else (result.error or "Command failed"),
+                    "success": result.success,
+                }
+
+            # Web search: payload has query/search
+            query = payload.get("query") or payload.get("search", "")
+            if query or sid in ("web_search", "search", "internet"):
+                query = query or action.description
+                result = await self._toolbelt.web_search(query)
+                return {
+                    "output": result.data[:4000] if result.success else (result.error or "Search failed"),
+                    "success": result.success,
+                }
+
+            # URL fetch: payload has url
+            url = payload.get("url", "")
+            if url or sid in ("fetch_url", "fetch", "url", "web_fetch"):
+                url = url or ""
+                if url:
+                    result = await self._toolbelt.fetch_url(url)
+                    return {
+                        "output": result.data[:4000] if result.success else (result.error or "Fetch failed"),
+                        "success": result.success,
+                    }
 
         # Built-in action handlers (memory + web fetch don't need skill files)
         if action.type == ActionType.MEMORY_STORE:

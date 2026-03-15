@@ -510,6 +510,8 @@ async def main() -> None:
     # Pass hands and router into the agent
     agent._hands = hands
     agent._hand_router = hand_router
+    agent._toolbelt = tool_belt
+    agent._executor._toolbelt = tool_belt  # bypass sandbox for file/shell/web
 
     channel._resolve_fn = agent.resolve_approval
     # Wire organism introspection for /commands

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Callable, Optional
 
@@ -446,10 +447,11 @@ class SovereignAgent:
             conversation_history=history,
         )
 
-        # Update session history before sending
+        # ReAct loop: LLM can emit [TOOL:name]args[/TOOL] markers
+        # which get executed and fed back until no more tool calls
         self._session.add_user(user_text)
         try:
-            reply = await self._llm(system=system, user=user_prompt)
+            reply = await self._react_loop(system, user_prompt)
             self._session.add_agent(reply)
             self._remember_interaction(user_text, reply)
             if active:
@@ -458,6 +460,89 @@ class SovereignAgent:
         except Exception as e:
             log.error("Conversational reply failed: %s", e)
             return "I'm having trouble right now. Please try again."
+
+    _TOOL_PATTERN = re.compile(r"\[TOOL:(\w+)\](.*?)\[/TOOL\]", re.DOTALL)
+    _MAX_REACT_ITERATIONS = 5
+
+    async def _react_loop(self, system: str, user_prompt: str) -> str:
+        """ReAct loop: detect tool calls in LLM output, execute, feed back."""
+        toolbelt = getattr(self, "_toolbelt", None)
+        current_prompt = user_prompt
+
+        for iteration in range(self._MAX_REACT_ITERATIONS):
+            reply = await self._llm(system=system, user=current_prompt)
+
+            # Check for tool calls
+            tool_calls = self._TOOL_PATTERN.findall(reply)
+            if not tool_calls or not toolbelt:
+                # No tool calls — clean any leftover markers and return
+                return self._TOOL_PATTERN.sub("", reply).strip()
+
+            # Execute each tool call
+            results: list[str] = []
+            for tool_name, tool_args in tool_calls:
+                tool_args = tool_args.strip()
+                log.info("ReAct tool call: %s(%s)", tool_name, tool_args[:60])
+                result = await self._execute_tool(toolbelt, tool_name, tool_args)
+                results.append(f"[{tool_name}] {result}")
+
+            # Strip tool markers from the reply to get the reasoning text
+            reasoning = self._TOOL_PATTERN.sub("", reply).strip()
+
+            # Build follow-up prompt with tool results
+            tool_output = "\n\n".join(results)
+            current_prompt = (
+                f"{current_prompt}\n\n"
+                f"Your previous reasoning: {reasoning}\n\n"
+                f"Tool results:\n{tool_output}\n\n"
+                "Now synthesize a natural response using the real tool output above. "
+                "Do NOT make up data or use placeholder text. Use the actual results. "
+                "Do NOT use [TOOL:...] markers again unless you need additional information."
+            )
+
+        # Max iterations reached — return last reply cleaned
+        return self._TOOL_PATTERN.sub("", reply).strip()
+
+    async def _execute_tool(self, toolbelt, tool_name: str, args: str) -> str:
+        """Execute a single tool call and return the result as a string."""
+        try:
+            if tool_name == "shell":
+                result = await toolbelt.shell(args, timeout=30)
+                return result.data if result.success else (result.error or "Command failed")
+
+            elif tool_name == "file_read":
+                result = await toolbelt.file_read(args.strip())
+                if result.success:
+                    # Cap output to avoid overwhelming the LLM context
+                    return result.data[:3000] if result.data else "(empty file)"
+                return result.error or "File not found"
+
+            elif tool_name == "file_write":
+                # Format: path\n---\ncontent
+                parts = args.split("\n---\n", 1)
+                if len(parts) == 2:
+                    result = await toolbelt.file_write(parts[0].strip(), parts[1])
+                    return "File written successfully" if result.success else (result.error or "Write failed")
+                return "Invalid format. Use: path\\n---\\ncontent"
+
+            elif tool_name == "web_search":
+                result = await toolbelt.web_search(args)
+                return result.data[:2000] if result.success else (result.error or "Search failed")
+
+            elif tool_name == "fetch_url":
+                result = await toolbelt.fetch_url(args.strip())
+                return result.data[:3000] if result.success else (result.error or "Fetch failed")
+
+            elif tool_name == "memory_recall":
+                result = await toolbelt.memory_recall(args)
+                return result.data[:2000] if result.success else "No memories found"
+
+            else:
+                return f"Unknown tool: {tool_name}"
+
+        except Exception as e:
+            log.error("Tool execution failed: %s(%s) → %s", tool_name, args[:40], e)
+            return f"Error: {e}"
 
     def _get_session_context(self, query: str) -> str:
         """Retrieve relevant memories to provide context to the planner.
