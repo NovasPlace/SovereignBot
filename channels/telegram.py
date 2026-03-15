@@ -103,6 +103,13 @@ class TelegramAdapter(ChannelAdapter):
         app.add_handler(CommandHandler("hands", self._cmd_hands))
         app.add_handler(CommandHandler("memory", self._cmd_memory))
 
+        # Catch-all: forward unregistered /commands to the agent pipeline
+        # (economy: /jobs, /economy, /bid, /status, /earnings, /add_job)
+        app.add_handler(MessageHandler(
+            filters.COMMAND,
+            self._on_message,
+        ))
+
         await app.initialize()
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
