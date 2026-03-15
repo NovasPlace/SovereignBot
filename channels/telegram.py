@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import defaultdict
 from typing import AsyncIterator, Optional
 
 from ..models import IncomingMessage
@@ -52,6 +54,11 @@ class TelegramAdapter(ChannelAdapter):
         self._hands_dict = None
         self._store = None
         self._proprioception = None
+
+        # Rate limiting: {user_id: [timestamp, ...]}
+        self._cmd_timestamps: dict[int, list[float]] = defaultdict(list)
+        self._CMD_RATE_LIMIT = 10   # max commands
+        self._CMD_RATE_WINDOW = 60  # per N seconds
 
     async def connect(self) -> None:
         try:
@@ -296,15 +303,38 @@ class TelegramAdapter(ChannelAdapter):
     # ── /commands ────────────────────────────────────────────────────────
 
     def _check_user(self, update) -> bool:
-        """Check if the user is allowed."""
+        """Check if the user is allowed. Logs unauthorized attempts."""
         if self._allowed is None:
             return True
         user_id = update.effective_user.id if update.effective_user else None
-        return user_id in self._allowed
+        if user_id not in self._allowed:
+            username = getattr(update.effective_user, 'username', 'unknown')
+            log.warning(
+                "UNAUTHORIZED access attempt: user_id=%s username=%s",
+                user_id, username,
+            )
+            return False
+        return True
+
+    def _rate_limited(self, user_id: int) -> bool:
+        """Check if a user has exceeded the command rate limit."""
+        now = time.time()
+        window = now - self._CMD_RATE_WINDOW
+        # Prune old timestamps
+        self._cmd_timestamps[user_id] = [
+            ts for ts in self._cmd_timestamps[user_id] if ts > window
+        ]
+        if len(self._cmd_timestamps[user_id]) >= self._CMD_RATE_LIMIT:
+            return True
+        self._cmd_timestamps[user_id].append(now)
+        return False
 
     async def _cmd_start(self, update, context) -> None:
         """Welcome message when user starts the bot."""
         if not self._check_user(update):
+            return
+        if self._rate_limited(update.effective_user.id):
+            await update.message.reply_text("\u26a0\ufe0f Rate limited. Try again in a minute.")
             return
         await update.message.reply_text(
             "🐙 *Sovereign Bot — Online*\n\n"
@@ -321,6 +351,9 @@ class TelegramAdapter(ChannelAdapter):
         """/help — list all commands."""
         if not self._check_user(update):
             return
+        if self._rate_limited(update.effective_user.id):
+            await update.message.reply_text("\u26a0\ufe0f Rate limited. Try again in a minute.")
+            return
         await update.message.reply_text(
             "🐙 *Sovereign Commands*\n\n"
             "/status — heartbeat, state, body vitals\n"
@@ -334,6 +367,9 @@ class TelegramAdapter(ChannelAdapter):
     async def _cmd_status(self, update, context) -> None:
         """/status — organism vitals."""
         if not self._check_user(update):
+            return
+        if self._rate_limited(update.effective_user.id):
+            await update.message.reply_text("\u26a0\ufe0f Rate limited. Try again in a minute.")
             return
 
         lines = ["🐙 *Sovereign Status*\n"]
@@ -381,6 +417,9 @@ class TelegramAdapter(ChannelAdapter):
         """/hands — list all registered hands."""
         if not self._check_user(update):
             return
+        if self._rate_limited(update.effective_user.id):
+            await update.message.reply_text("\u26a0\ufe0f Rate limited. Try again in a minute.")
+            return
 
         if not self._hands_dict:
             await update.message.reply_text("No hands registered.")
@@ -396,9 +435,19 @@ class TelegramAdapter(ChannelAdapter):
             "💼 Business": ["invoice", "competitive", "seo", "legal"],
             "📦 Product": ["documentation", "design_system", "onboarding"],
             "🔧 Operations": ["deployment", "sysadmin", "research", "writing"],
+            "🗓️ Daily Life": [
+                "daily_planner", "habit_tracker", "budget",
+                "journal", "news_curator",
+            ],
+            "💪 Growth": ["fitness", "learning", "meal_planner", "content"],
+            "🌍 Life": [
+                "travel", "shopping", "relationships",
+                "home_auto", "relocation", "health",
+            ],
         }
 
-        lines = ["🐙 *Sovereign Hands — 25 Autonomous Pipelines*\n"]
+        total = len(self._hands_dict) if self._hands_dict else 0
+        lines = [f"🐙 *Sovereign Hands — {total} Autonomous Pipelines*\n"]
         for cat_name, hand_keys in categories.items():
             active = [k for k in hand_keys if k in self._hands_dict]
             if active:
@@ -414,6 +463,9 @@ class TelegramAdapter(ChannelAdapter):
     async def _cmd_memory(self, update, context) -> None:
         """/memory — memory statistics."""
         if not self._check_user(update):
+            return
+        if self._rate_limited(update.effective_user.id):
+            await update.message.reply_text("⚠️ Rate limited. Try again in a minute.")
             return
 
         lines = ["🧠 *Sovereign Memory*\n"]

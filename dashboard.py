@@ -2,10 +2,16 @@
 
 Lightweight FastAPI server exposing organism vitals.
 Runs alongside the main daemon on port 8800.
+
+Security:
+- Binds to 127.0.0.1 only (no network exposure)
+- Bearer token auth via SOVEREIGN_DASHBOARD_TOKEN env var
+- No docs/redoc endpoints exposed
 """
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import time
@@ -84,7 +90,7 @@ _STATIC_DIR = Path(__file__).parent / "static"
 def create_app():
     """Create the FastAPI app."""
     try:
-        from fastapi import FastAPI
+        from fastapi import FastAPI, Request
         from fastapi.responses import HTMLResponse, JSONResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError:
@@ -93,12 +99,30 @@ def create_app():
 
     app = FastAPI(title="Sovereign Dashboard", docs_url=None, redoc_url=None)
 
+    # Dashboard auth token (optional but recommended)
+    _DASH_TOKEN = os.environ.get("SOVEREIGN_DASHBOARD_TOKEN", "")
+
+    def _check_auth(request) -> bool:
+        """Validate bearer token if SOVEREIGN_DASHBOARD_TOKEN is set."""
+        if not _DASH_TOKEN:
+            return True  # no token configured — allow (localhost only anyway)
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            return hmac.compare_digest(auth[7:], _DASH_TOKEN)
+        # Also check query param for browser access
+        token = request.query_params.get("token", "")
+        return hmac.compare_digest(token, _DASH_TOKEN) if token else False
+
     @app.get("/api/status")
-    async def api_status():
+    async def api_status(request: Request):
+        if not _check_auth(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
         return JSONResponse(_status_payload())
 
     @app.get("/api/hands")
-    async def api_hands():
+    async def api_hands(request: Request):
+        if not _check_auth(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
         if not _hands:
             return JSONResponse({"hands": []})
         return JSONResponse({
@@ -118,8 +142,12 @@ def create_app():
     return app
 
 
-async def start_dashboard(host: str = "0.0.0.0", port: int = 8800):
-    """Start the dashboard as a background task."""
+async def start_dashboard(host: str = "127.0.0.1", port: int = 8800):
+    """Start the dashboard as a background task.
+
+    Binds to 127.0.0.1 only — never exposed to network.
+    Set SOVEREIGN_DASHBOARD_TOKEN for bearer auth.
+    """
     app = create_app()
     if app is None:
         return

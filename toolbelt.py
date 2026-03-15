@@ -29,16 +29,36 @@ _SAFE_TMP = "/tmp/sovereign"
 
 # Commands that will never be executed regardless of context
 _BLOCKED_COMMANDS = [
+    # Destructive
     (r":(){ :|:& };:", "fork bomb"),
     (r"dd\s+if=.*/dev/(?!null|zero)", "raw disk read"),
     (r"dd\s+of=.*/dev/(?!null|zero)", "raw disk write"),
     (r"mkfs", "filesystem format"),
     (r"> /dev/sd", "raw device write"),
-    (r"iptables\s+-F", "flush firewall"),
     (r"rm\s+-rf\s+/\s*$", "wipe root"),
     (r"rm\s+-rf\s+~\s*$", "wipe home"),
+    (r"rm\s+-rf\s+/home\s*$", "wipe home dir"),
+    # Remote code execution
     (r"curl[^|]+\|\s*(ba)?sh", "remote script execution"),
     (r"wget[^|]+\|\s*(ba)?sh", "remote script execution"),
+    # Privilege escalation
+    (r"chmod\s+777\s+/", "world-writable root"),
+    (r"chown\s+root", "chown to root"),
+    (r"iptables\s+-F", "flush firewall"),
+    # Persistence / backdoor
+    (r"crontab", "crontab modification"),
+    (r"\.ssh/authorized_keys", "SSH key injection"),
+    (r">> /etc/passwd", "passwd file write"),
+    (r">> /etc/shadow", "shadow file write"),
+    # Reverse shell
+    (r"nc\s+-[a-z]*e\s+/bin", "netcat reverse shell"),
+    (r"bash\s+-i\s+>&\s+/dev/tcp", "bash reverse shell"),
+    (r"python.*socket.*connect", "python reverse shell"),
+    # Information exfiltration
+    (r"cat\s+/etc/shadow", "shadow file read"),
+    (r"cat\s+\.env\s*\|", "env pipe exfiltration"),
+    (r"env\s*\|\s*(curl|wget|nc)", "env exfiltration"),
+    (r"history\s*-c", "history wipe"),
 ]
 
 # URLs that may never be fetched (SSRF protection)

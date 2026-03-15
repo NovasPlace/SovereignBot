@@ -96,12 +96,15 @@ def _safe_import(name: str, globals=None, locals=None, fromlist=(), level=0):
     - 'from urllib.parse import urlencode' calls __import__('urllib.parse',
       ..., fromlist=['urlencode']) and expects the SUBMODULE returned
     """
+    # SECURITY: subprocess, os, sys are EXCLUDED — they allow sandbox escape.
+    # Skills needing shell/filesystem access must use ToolBelt primitives
+    # which are audited, permission-gated, and TRACE-logged.
     ALLOWED_MODULES = {
-        "json", "re", "os", "pathlib", "subprocess", "shlex",
+        "json", "re", "pathlib", "shlex",
         "urllib", "urllib.parse", "urllib.request", "urllib.error",
         "html", "hashlib", "hmac", "base64", "time", "datetime",
         "collections", "itertools", "functools", "math", "random",
-        "string", "textwrap", "io", "sys", "struct", "typing",
+        "string", "textwrap", "io", "struct", "typing",
         "dataclasses", "enum", "abc", "contextlib",
     }
     root = name.split(".")[0]
