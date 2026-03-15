@@ -18,12 +18,13 @@ log = logging.getLogger("sovereign.hand_router")
 
 # Trigger phrases for each hand — lower-cased
 _TRIGGERS: dict[str, list[str]] = {
+    # ── Part 8 originals ──────────────────────────────────────────────
     "code_engineer": [
         "write code", "write a function", "write a class", "write a script",
-        "write tests", "implement this", "implement a", "build this",
+        "implement this", "implement a", "build this",
         "create a module", "create a function", "fix this code",
-        "refactor", "add a feature", "debug my code", "write me a",
-        "code this", "make a plugin", "add to the codebase",
+        "refactor", "add a feature", "code this",
+        "make a plugin", "add to the codebase",
     ],
     "research": [
         "research this", "find out about", "what's the latest on",
@@ -44,11 +45,96 @@ _TRIGGERS: dict[str, list[str]] = {
     ],
     "sysadmin": [
         "something's broken", "server is down", "fix the server",
-        "diagnose", "why is this failing", "system problem",
+        "why is this failing", "system problem",
         "service is not starting", "out of disk", "memory issue",
-        "cpu is spiking", "check the logs", "restart",
+        "cpu is spiking", "check the logs",
+    ],
+    # ── Part 11: Engineering ──────────────────────────────────────────
+    "api_builder": [
+        "build api", "build an api", "rest api", "graphql",
+        "design endpoints", "api design", "create an api",
+    ],
+    "debugger": [
+        "debug", "bug report", "not working", "broken behavior",
+        "wrong output", "regression", "find the bug",
+        "why is this broken", "trace this error",
+    ],
+    "test_engineer": [
+        "write tests", "test suite", "coverage", "unit test",
+        "integration test", "generate tests", "test this code",
+    ],
+    "cicd": [
+        "ci/cd", "github actions", "pipeline", "continuous integration",
+        "automated deploy", "gitlab ci", "set up ci",
+    ],
+    "performance": [
+        "slow", "performance", "benchmark", "optimize speed",
+        "bottleneck", "profile this", "make it faster",
+    ],
+    # ── Part 11: Data ─────────────────────────────────────────────────
+    "data_analyst": [
+        "analyze data", "analyze this csv", "spreadsheet",
+        "chart", "visualization", "statistics",
+        "trend analysis", "data report",
+    ],
+    "database": [
+        "schema", "migration", "database design", "sql",
+        "optimize query", "design tables", "database schema",
+    ],
+    "scraper": [
+        "scrape", "crawl", "extract data from",
+        "web scraping", "pull data from website",
+        "scrape this site",
+    ],
+    # ── Part 11: Communication ────────────────────────────────────────
+    "email": [
+        "check email", "draft email", "reply to email",
+        "inbox", "email summary", "send email",
+    ],
+    "social_media": [
+        "post on", "tweet", "linkedin post",
+        "social media", "schedule post", "check mentions",
+        "write a tweet", "facebook post",
+    ],
+    "meeting": [
+        "meeting notes", "summarize meeting", "action items from meeting",
+        "transcribe meeting", "follow up from meeting",
+        "meeting summary",
+    ],
+    # ── Part 11: Business ─────────────────────────────────────────────
+    "invoice": [
+        "invoice", "bill client", "generate invoice",
+        "send invoice", "payment tracking",
+    ],
+    "competitive": [
+        "competitor analysis", "competitive analysis",
+        "market research", "what are they doing",
+        "monitor competitors", "track competitors",
+    ],
+    "seo": [
+        "seo", "search ranking", "meta tags",
+        "page speed", "search optimization", "seo audit",
+    ],
+    "legal": [
+        "terms of service", "privacy policy", "contract",
+        "nda", "license agreement", "legal document",
+        "draft a contract",
+    ],
+    # ── Part 11: Product ──────────────────────────────────────────────
+    "documentation": [
+        "write docs", "generate docs", "api reference",
+        "document this codebase", "generate readme",
+    ],
+    "design_system": [
+        "design system", "component library", "style guide",
+        "design tokens", "ui kit", "build components",
+    ],
+    "onboarding": [
+        "onboarding flow", "user journey", "first-time experience",
+        "tutorial", "walkthrough flow", "user onboarding",
     ],
 }
+
 
 
 @dataclass

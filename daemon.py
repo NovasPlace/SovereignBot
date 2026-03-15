@@ -396,8 +396,20 @@ async def main() -> None:
     from .toolbelt import ToolBelt
     from .work_engine import WorkPlanner, WorkExecutor
     from .hands import (
+        # Part 8
         CodeEngineerHand, ResearchHand, DeploymentHand,
         WritingHand, SysAdminHand,
+        # Part 11 — Engineering
+        APIBuilderHand, DebuggerHand, TestEngineerHand,
+        CICDEngineerHand, PerformanceProfilerHand,
+        # Part 11 — Data
+        DataAnalystHand, DatabaseArchitectHand, ScraperHand,
+        # Part 11 — Communication
+        EmailOperatorHand, SocialMediaHand, MeetingAssistantHand,
+        # Part 11 — Business
+        InvoiceHand, CompetitiveIntelHand, SEOOptimizerHand, LegalDrafterHand,
+        # Part 11 — Product
+        DocumentationHand, DesignSystemHand, OnboardingArchitectHand,
     )
     from .hand_router import HandRouter
 
@@ -405,7 +417,11 @@ async def main() -> None:
     work_planner = WorkPlanner(llm_fn=routed_llm_fn)
     work_executor = WorkExecutor(tools=tool_belt, llm_fn=routed_llm_fn)
 
+    # Approval function for hands that need user sign-off
+    _hand_approve = getattr(channel, "ask_approval", None)
+
     hands = {
+        # Part 8 originals
         "code_engineer": CodeEngineerHand(
             tools=tool_belt, work_planner=work_planner,
             work_executor=work_executor, llm_fn=routed_llm_fn,
@@ -416,6 +432,34 @@ async def main() -> None:
                                persona_engine=persona_engine),
         "sysadmin": SysAdminHand(tools=tool_belt, llm_fn=routed_llm_fn,
                                   store=store),
+        # Part 11 — Engineering
+        "api_builder": APIBuilderHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "debugger": DebuggerHand(tools=tool_belt, llm_fn=routed_llm_fn, store=store),
+        "test_engineer": TestEngineerHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "cicd": CICDEngineerHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "performance": PerformanceProfilerHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        # Part 11 — Data
+        "data_analyst": DataAnalystHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "database": DatabaseArchitectHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "scraper": ScraperHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        # Part 11 — Communication
+        "email": EmailOperatorHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                    send_approval_fn=_hand_approve),
+        "social_media": SocialMediaHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                         send_approval_fn=_hand_approve),
+        "meeting": MeetingAssistantHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                         temporal=temporal),
+        # Part 11 — Business
+        "invoice": InvoiceHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                temporal=temporal, send_approval_fn=_hand_approve),
+        "competitive": CompetitiveIntelHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                             store=store),
+        "seo": SEOOptimizerHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "legal": LegalDrafterHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        # Part 11 — Product
+        "documentation": DocumentationHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "design_system": DesignSystemHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        "onboarding": OnboardingArchitectHand(tools=tool_belt, llm_fn=routed_llm_fn),
     }
 
     hand_router = HandRouter(workdir=os.path.expanduser("~/Desktop/Agent_System"))
