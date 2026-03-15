@@ -266,47 +266,28 @@ class SovereignAgent:
                 if hand:
                     log.info("Hand matched: %s (confidence=%.2f)", match.hand_name, match.confidence)
                     # Send immediate acknowledgment
-                    ack = f"🤜 Starting **{match.hand_name.replace('_', ' ').title()}** pipeline..."
+                    hand_label = match.hand_name.replace("_", " ").title()
+                    ack = f"🤜 Starting **{hand_label}** pipeline..."
                     await self._send(uid, ack)
                     try:
-                        if match.hand_name == "code_engineer":
-                            from .hands import CodeRequest
-                            result = await hand.execute(CodeRequest(
-                                description=clean_text,
-                                workdir=match.workdir,
-                                user_id=uid,
-                            ))
-                            response = (
-                                f"✅ **Done.** {result.summary}\n"
-                                f"Files: {', '.join(result.files_modified) or 'none'}\n"
-                                f"Debug cycles: {result.debug_cycles}"
-                            ) if result.status == "success" else (
-                                f"⚠️ **Stopped at phase: {result.phase_reached}**\n"
-                                f"{result.abort_reason}"
-                            )
-                        elif match.hand_name == "research":
-                            result = await hand.execute(clean_text)
-                            response = (
-                                f"🔬 **Research complete** (confidence: {result.confidence})\n\n"
-                                f"{result.answer}"
-                            )
-                        elif match.hand_name == "writing":
-                            result = await hand.execute(clean_text)
-                            response = result.content
-                        elif match.hand_name == "sysadmin":
-                            result = await hand.execute(clean_text, workdir=match.workdir)
-                            response = (
-                                f"🔧 **SysAdmin complete**\n{result.summary}\n\n"
-                                f"**Hardening:** {result.hardening}"
-                            )
-                        else:
-                            response = f"Hand '{match.hand_name}' not fully implemented yet."
+                        result = await self._dispatch_hand(
+                            hand, match.hand_name, clean_text,
+                            match.workdir, uid,
+                        )
+                        response = self._format_hand_result(
+                            result, match.hand_name, hand_label,
+                        )
                     except Exception as e:
                         log.error("Hand execution failed: %s", e)
-                        response = f"⚠️ The {match.hand_name} pipeline hit an error: {e}"
+                        response = f"⚠️ The {hand_label} pipeline hit an error: {e}"
 
                     self._session.add_user(clean_text)
                     self._session.add_agent(response)
+
+                    # Record as a meaningful interaction
+                    if self._soul:
+                        self._soul.record_meaningful_interaction(uid, "task_completed")
+
                     return response
 
         # 1c. DREAM INSIGHTS — share what the organism dreamed about
@@ -585,6 +566,104 @@ class SovereignAgent:
         except Exception as e:
             log.warning("Failed to store interaction memory: %s", e)
 
+    async def _dispatch_hand(
+        self, hand, hand_name: str, message: str, workdir: str, user_id: str,
+    ) -> Any:
+        """Generic hand dispatch — introspects execute() to map standard args."""
+        import inspect
+        sig = inspect.signature(hand.execute)
+        params = list(sig.parameters.keys())
+
+        kwargs: dict[str, Any] = {}
+
+        # Map the user message to the first positional text arg
+        text_params = {
+            "description", "query", "problem", "bug_report", "topic",
+            "question", "target", "habit", "action", "target_url",
+        }
+        for pname in params:
+            if pname == "self":
+                continue
+            if pname in text_params:
+                kwargs[pname] = message
+                break
+        else:
+            # No recognized text param — try first non-self param
+            for pname in params:
+                if pname != "self":
+                    p = sig.parameters[pname]
+                    if p.annotation in (str, inspect.Parameter.empty):
+                        kwargs[pname] = message
+                        break
+
+        # Map standard kwargs if the hand accepts them
+        if "workdir" in params and workdir:
+            kwargs["workdir"] = workdir
+        if "user_id" in params:
+            kwargs["user_id"] = user_id
+
+        # Special case: code_engineer needs a CodeRequest
+        if hand_name == "code_engineer":
+            try:
+                from ..hands.code_engineer import CodeRequest
+                return await hand.execute(CodeRequest(
+                    description=message,
+                    workdir=workdir or ".",
+                    user_id=user_id,
+                ))
+            except Exception:
+                pass
+
+        return await hand.execute(**kwargs)
+
+    @staticmethod
+    def _format_hand_result(result: Any, hand_name: str, hand_label: str) -> str:
+        """Extract a user-friendly response from a hand result object."""
+        status = getattr(result, "status", "unknown")
+        summary = getattr(result, "summary", "")
+        phase = getattr(result, "phase_reached", "")
+
+        # Result-type-specific formatting
+        content = getattr(result, "content", "")
+        answer = getattr(result, "answer", "")
+        plan = getattr(result, "plan", "")
+
+        if status == "success":
+            emoji = "✅"
+        elif status == "partial":
+            emoji = "⚡"
+        else:
+            emoji = "⚠️"
+
+        parts = [f"{emoji} **{hand_label}** — {summary}" if summary else f"{emoji} **{hand_label}** complete"]
+
+        # Append any rich content
+        if content:
+            parts.append(str(content)[:2000])
+        elif answer:
+            parts.append(str(answer)[:2000])
+        elif plan:
+            parts.append(str(plan)[:2000])
+
+        # Show phase info on non-success
+        if status != "success" and phase:
+            parts.append(f"_Stopped at phase: {phase}_")
+
+        # Show extra fields if present
+        for field in ("files_created", "files_modified", "debug_cycles",
+                      "hardening", "test_output", "root_cause"):
+            val = getattr(result, field, None)
+            if val:
+                if isinstance(val, list) and val:
+                    parts.append(f"**{field.replace('_', ' ').title()}:** {', '.join(str(v) for v in val)}")
+                elif isinstance(val, (int, float)) and val > 0:
+                    parts.append(f"**{field.replace('_', ' ').title()}:** {val}")
+                elif isinstance(val, str) and val.strip():
+                    parts.append(f"**{field.replace('_', ' ').title()}:** {val[:300]}")
+
+        return "\n\n".join(parts)
+
     def resolve_approval(self, action_id: str, user_response: str) -> None:
         """Call this when the user responds to an approval prompt."""
         self._gate.resolve(action_id, user_response)
+
