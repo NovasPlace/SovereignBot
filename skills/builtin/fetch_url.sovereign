@@ -1,0 +1,66 @@
+---
+name: fetch_url
+version: 1.0.0
+author: sovereign-core
+trust_tier: core
+description: Fetch a URL and return its text content. HTML is stripped to plain text. Goes through EgressGate.
+permissions:
+  - net:read
+network_whitelist: []
+---
+import urllib.request
+import html
+import re
+
+MAX_BYTES = 200_000
+TIMEOUT   = 15
+
+
+def strip_html(raw: str) -> str:
+    """Very basic HTML → plain text. Strips tags, decodes entities, collapses whitespace."""
+    raw = re.sub(r"<(script|style)[^>]*>.*?</(script|style)>", "", raw, flags=re.I | re.DOTALL)
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    raw = html.unescape(raw)
+    raw = re.sub(r"[ \t]+", " ", raw)
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    return raw.strip()
+
+
+# === Sovereign entry point ===
+url = action_payload.get("url", "")
+
+if not url:
+    sovereign_return({"output": "No URL provided.", "success": False})
+
+if not url.startswith(("http://", "https://")):
+    sovereign_return({"output": f"Only http/https URLs allowed. Got: {url[:80]}", "success": False})
+
+try:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Sovereign/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        content_type = resp.headers.get("Content-Type", "")
+        raw = resp.read(MAX_BYTES).decode("utf-8", errors="replace")
+
+    if "html" in content_type.lower():
+        text = strip_html(raw)
+    else:
+        text = raw
+
+    truncated = len(raw) >= MAX_BYTES
+    output = text[:50_000]  # final cap after stripping
+    if truncated:
+        output += "\n\n[Content truncated]"
+
+    sovereign_return({
+        "output": output,
+        "success": True,
+        "url": url,
+        "content_type": content_type,
+        "truncated": truncated,
+    })
+
+except Exception as e:
+    sovereign_return({"output": f"Fetch failed: {e}", "success": False})

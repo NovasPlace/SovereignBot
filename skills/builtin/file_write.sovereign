@@ -1,0 +1,56 @@
+---
+name: file_write
+version: 1.0.0
+author: sovereign-core
+trust_tier: core
+description: Write or append to a file inside the user's home directory. Creates parent directories if needed. Requires ApprovalGate confirmation.
+permissions:
+  - file:write
+network_whitelist: []
+---
+import pathlib
+
+HOME = pathlib.Path.home()
+MAX_WRITE_BYTES = 10_000_000  # 10MB write limit
+
+def resolve_safe_path(raw_path: str) -> pathlib.Path:
+    p = (HOME / raw_path).resolve()
+    # Re-check after resolve to catch symlink escapes
+    if not str(p).startswith(str(HOME)):
+        raise PermissionError(f"Path escape denied: {raw_path!r}")
+    return p
+
+# === Sovereign entry point ===
+raw_path = action_payload.get("path", "")
+content  = action_payload.get("content", "")
+mode     = action_payload.get("mode", "write")  # "write" | "append"
+
+if not raw_path:
+    sovereign_return({"output": "No path provided.", "success": False})
+
+if len(content.encode()) > MAX_WRITE_BYTES:
+    sovereign_return({"output": f"Content too large (max {MAX_WRITE_BYTES:,} bytes)", "success": False})
+
+try:
+    path = resolve_safe_path(raw_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if mode == "append":
+        with path.open("a", encoding="utf-8") as f:
+            f.write(content)
+        action = "Appended"
+    else:
+        path.write_text(content, encoding="utf-8")
+        action = "Wrote"
+
+    sovereign_return({
+        "output": f"{action} {len(content):,} chars to {path}",
+        "success": True,
+        "path": str(path),
+        "bytes_written": len(content.encode()),
+    })
+
+except PermissionError as e:
+    sovereign_return({"output": str(e), "success": False})
+except Exception as e:
+    sovereign_return({"output": f"Write failed: {e}", "success": False})

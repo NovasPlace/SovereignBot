@@ -1,0 +1,81 @@
+---
+name: shell
+version: 1.0.0
+author: sovereign-core
+trust_tier: core
+description: Run a shell command. Requires ApprovalGate confirmation. Blocked commands list prevents catastrophic ops. Output capped at 10KB.
+permissions:
+  - exec:subprocess
+network_whitelist: []
+---
+import re
+import subprocess
+import shlex
+
+# Commands that are always blocked — no exceptions
+_BLOCKED_PATTERNS = [
+    r"\brm\s+-rf\s+[/~]",           # rm -rf / or ~/
+    r"\bmkfs\b",                      # format disk
+    r"\bdd\s+.*of=/dev/",            # write to raw device
+    r">\s*/dev/(sd[a-z]|hd[a-z])",  # redirect to block device
+    r"\bchmod\s+777\s+/",            # chmod 777 system dirs
+    r"\bsudo\s+su\b",                # privilege escalation
+    r"\bcurl\s+.*\|\s*bash",         # curl-pipe-bash RCE pattern
+    r"\bwget\s+.*\|\s*sh",           # wget-pipe-sh RCE pattern
+    r":\(\)\{.*\|.*&\s*\}",         # fork bomb
+]
+
+MAX_OUTPUT = 10_000
+TIMEOUT_S  = 30
+
+
+def is_blocked(cmd: str) -> tuple[bool, str]:
+    for pat in _BLOCKED_PATTERNS:
+        if re.search(pat, cmd, re.I):
+            return True, pat
+    return False, ""
+
+
+# === Sovereign entry point ===
+command = action_payload.get("command", "")
+cwd     = action_payload.get("cwd", None)
+
+if not command:
+    sovereign_return({"output": "No command provided.", "success": False})
+
+blocked, pattern = is_blocked(command)
+if blocked:
+    sovereign_return({
+        "output": f"Command blocked by safety policy (matched: {pattern})",
+        "success": False,
+    })
+
+try:
+    result = subprocess.run(
+        command,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_S,
+        cwd=cwd,
+    )
+    stdout = result.stdout[:MAX_OUTPUT]
+    stderr = result.stderr[:2000]
+    combined = stdout
+    if stderr and result.returncode != 0:
+        combined += f"\nSTDERR:\n{stderr}"
+
+    sovereign_return({
+        "output": combined or "(no output)",
+        "success": result.returncode == 0,
+        "exit_code": result.returncode,
+        "command": command,
+    })
+
+except subprocess.TimeoutExpired:
+    sovereign_return({
+        "output": f"Command timed out after {TIMEOUT_S}s",
+        "success": False,
+    })
+except Exception as e:
+    sovereign_return({"output": f"Shell error: {e}", "success": False})

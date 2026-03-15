@@ -1,0 +1,39 @@
+---
+name: memory_recall
+version: 1.0.0
+author: sovereign-core
+trust_tier: core
+description: Search Sovereign's memory store (CortexDB + local SQLite) for information from past conversations and learned facts.
+permissions:
+  - memory:read
+network_whitelist: []
+---
+# memory_recall runs in the core context — has access to sovereign_store
+
+query = action_payload.get("query", "")
+limit = int(action_payload.get("limit", 10))
+
+if not query:
+    sovereign_return({"output": "No search query provided.", "success": False})
+
+memories = sovereign_store.search_memories(query, limit=limit)
+
+if not memories:
+    sovereign_return({
+        "output": f"No memories found for: {query}",
+        "success": True,
+        "count": 0,
+    })
+
+lines = [f"Memory recall for: {query}\n"]
+for i, m in enumerate(memories, 1):
+    conf = m.get("confidence", 0)
+    src  = m.get("source", "unknown")
+    content = m.get("content", "")
+    lines.append(f"{i}. [{src} conf={conf:.1f}] {content}")
+
+sovereign_return({
+    "output": "\n".join(lines),
+    "success": True,
+    "count": len(memories),
+})

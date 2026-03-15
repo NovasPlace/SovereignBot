@@ -1,0 +1,61 @@
+---
+name: weather
+version: 1.0.0
+author: sovereign-core
+trust_tier: core
+description: Get current weather and forecast for any city. Uses wttr.in — no API key required.
+permissions:
+  - net:read
+network_whitelist:
+  - wttr.in
+---
+import urllib.request
+import urllib.parse
+
+TIMEOUT = 10
+MAX_BYTES = 50_000
+
+
+def get_weather(location: str, format_type: str = "full") -> str:
+    """Fetch weather from wttr.in for a given location."""
+    loc = urllib.parse.quote(location)
+
+    if format_type == "short":
+        # One-line summary: "⛅️ +72°F"
+        url = f"https://wttr.in/{loc}?format=3"
+    elif format_type == "json":
+        url = f"https://wttr.in/{loc}?format=j1"
+    else:
+        # Full ASCII weather report (plain text, no ANSI codes)
+        url = f"https://wttr.in/{loc}?T"  # T = no terminal colors
+
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "curl/7.68.0"},  # wttr.in returns plain text for curl UA
+    )
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        return resp.read(MAX_BYTES).decode("utf-8", errors="replace")
+
+
+# === Sovereign entry point ===
+location = action_payload.get("location", "")
+fmt      = action_payload.get("format", "full")  # "full" | "short"
+
+if not location:
+    sovereign_return({"output": "No location provided. Try: {\"location\": \"New York\"}", "success": False})
+
+try:
+    result = get_weather(location, fmt)
+    # Strip excessive blank lines
+    import re
+    result = re.sub(r"\n{3,}", "\n\n", result).strip()
+
+    sovereign_return({
+        "output": result,
+        "success": True,
+        "location": location,
+        "format": fmt,
+    })
+
+except Exception as e:
+    sovereign_return({"output": f"Weather fetch failed: {e}", "success": False})

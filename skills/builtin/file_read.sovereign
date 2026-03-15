@@ -1,0 +1,107 @@
+---
+name: file_read
+version: 1.2.0
+author: sovereign-core
+trust_tier: core
+description: Read a file or list a directory from disk. Path is jailed to the user's home directory. Handles case-insensitive paths on case-sensitive filesystems.
+permissions:
+  - file:read
+network_whitelist: []
+---
+import os
+import pathlib
+
+# Path jail — all reads restricted to user home
+HOME = pathlib.Path.home()
+MAX_BYTES = 100_000  # 100KB max read
+
+def resolve_case_insensitive(p: pathlib.Path) -> pathlib.Path:
+    """Walk path segments and match case-insensitively against real filesystem.
+    
+    Handles LLMs that lowercase paths like /home/frost/desktop/agent_system
+    when the real path is /home/frost/Desktop/Agent_System.
+    """
+    parts = p.parts
+    resolved = pathlib.Path(parts[0])  # root: '/'
+    for segment in parts[1:]:
+        if (resolved / segment).exists():
+            resolved = resolved / segment
+            continue
+        # Try case-insensitive match
+        try:
+            matches = [
+                entry for entry in resolved.iterdir()
+                if entry.name.lower() == segment.lower()
+            ]
+            if matches:
+                resolved = matches[0]
+            else:
+                resolved = resolved / segment  # keep as-is, will fail later
+        except PermissionError:
+            resolved = resolved / segment
+    return resolved
+
+def resolve_safe_path(raw_path: str) -> pathlib.Path:
+    """Resolve path, fix case, and ensure it's inside HOME."""
+    raw = raw_path.strip()
+    p = pathlib.Path(raw)
+    if p.is_absolute():
+        p = resolve_case_insensitive(p)
+    else:
+        p = resolve_case_insensitive(HOME / raw)
+    p = p.resolve()
+    if not str(p).startswith(str(HOME)):
+        raise PermissionError(f"Path escape denied: {raw_path!r} -> {p}")
+    return p
+
+
+# === Sovereign entry point ===
+raw_path = action_payload.get("path", "")
+if not raw_path:
+    sovereign_return({"output": "No path provided.", "success": False})
+
+try:
+    path = resolve_safe_path(raw_path)
+    if not path.exists():
+        sovereign_return({"output": f"File not found: {path}", "success": False})
+
+    # Directory listing
+    if path.is_dir():
+        entries = sorted(path.iterdir())
+        lines = []
+        for e in entries[:100]:
+            prefix = "DIR  " if e.is_dir() else "FILE "
+            size = ""
+            if e.is_file():
+                size = f" ({e.stat().st_size:,} bytes)"
+            lines.append(f"{prefix}{e.name}{size}")
+        listing = "\n".join(lines)
+        sovereign_return({
+            "output": f"Directory: {path}\n\n{listing}",
+            "success": True,
+            "path": str(path),
+            "type": "directory",
+            "count": len(entries),
+        })
+
+    if not path.is_file():
+        sovereign_return({"output": f"Not a file: {path}", "success": False})
+
+    size = path.stat().st_size
+    if size > MAX_BYTES:
+        content = path.read_bytes()[:MAX_BYTES].decode("utf-8", errors="replace")
+        content += f"\n\n[Truncated -- file is {size:,} bytes, showing first {MAX_BYTES:,}]"
+    else:
+        content = path.read_text(encoding="utf-8", errors="replace")
+
+    sovereign_return({
+        "output": content,
+        "success": True,
+        "path": str(path),
+        "size_bytes": size,
+    })
+
+except PermissionError as e:
+    sovereign_return({"output": str(e), "success": False})
+except Exception as e:
+    sovereign_return({"output": f"Read failed: {e}", "success": False})
