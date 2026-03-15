@@ -17,6 +17,7 @@ import asyncio
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..channels.base import IncomingMessage
@@ -123,8 +124,9 @@ class SovereignAgent:
         # Rolling conversation history — feeds prior turns to LLM as context
         self._session = SessionContext(max_tokens=2048)
 
-        # Brain — genome-loaded prompt assembly with skillset frameworks
-        self._brain = Brain()  # uses default genome; can pass genome_path for custom
+        # Brain — load GENOME.md (the organism's cognitive directive)
+        _genome_path = str(Path(__file__).resolve().parent.parent / "GENOME.md")
+        self._brain = Brain(genome_path=_genome_path)
         self._skillset_router = SkillsetRouter(store=self._store)
         self._cleanser = ResponseCleanser()
 
