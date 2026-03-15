@@ -71,6 +71,13 @@ Rules:
 - If a command fails, explain what happened and try a different approach.
 - Do NOT wrap tool calls in code blocks — use the [TOOL:name]...[/TOOL] format directly.
 
+Shell rules:
+- Linux paths are CASE-SENSITIVE. Agent_System ≠ agent_system. Use EXACT names.
+- Each shell command runs in its own process. 'cd' alone does nothing — combine: 'cd /path && ls'
+- To explore a directory, use 'ls /full/path' — not 'cd /path' then 'ls'.
+- If a path fails, use 'ls' on the parent directory to find the correct name.
+- The operator's home is /home/frost. Desktop is ~/Desktop.
+
 You are NOT limited to just chatting. When the user asks you to do something,
 DO IT using your tools. Don't say you can't — you can."""
 
