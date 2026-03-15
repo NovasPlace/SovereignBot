@@ -584,13 +584,33 @@ async def main() -> None:
     agent._chain_executor = chain_executor
     log.info("Hand chain executor ready (%d chains)", len(chain_executor.available_chains))
 
+    # ── Proactive Loop — the organism reaches out on its own ──────────────
+    from .proactive import ProactiveLoop
+
+    operator_id = str(list(allowed_ids)[0]) if allowed_ids else "0"
+    proactive = ProactiveLoop(
+        telegram=channel,
+        temporal=temporal,
+        proprioception=proprioception,
+        dreams=dreams,
+        emotion=emotion_engine,
+        narrative=soul.narrative,
+        curiosity=soul.curiosity,
+        relationship=soul.relationship,
+        store=store,
+        llm_fn=routed_llm_fn,
+        operator_id=operator_id,
+    )
+    heartbeat.register_phase(proactive.on_pulse)
+    log.info("Proactive loop registered — organism will now initiate contact")
+
     # ── Connect and run ────────────────────────────────────────────────────────
     await channel.connect()
     heartbeat.start()  # the organism is now alive
     log.info(
         "Sovereign online — session=%s skills=%d "
         "organs=[IonicHalo,TRACE,Spectra,Heartbeat,Soul,Dreams,TaskQueue,"
-        "Senses,Immune,Voice,Economy,Dashboard,Chains]",
+        "Senses,Immune,Voice,Economy,Dashboard,Chains,Proactive]",
         session_id, len(installed),
     )
 
