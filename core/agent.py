@@ -310,6 +310,13 @@ class SovereignAgent:
         # 2. Retrieve session context from memory
         context = self._get_session_context(clean_text)
 
+        # 2b. Tool-intent bypass — if the message needs tools (file/shell/web),
+        # skip the planner and go straight to the ReAct loop where tool
+        # calling actually works. The planner generates sandbox actions that fail.
+        if self._is_tool_intent(clean_text):
+            log.info("Tool-intent detected — bypassing planner, using ReAct loop")
+            return await self._conversational_reply(clean_text)
+
         # 3. Plan
         try:
             plan_result = await self._planner.plan(
@@ -465,6 +472,31 @@ class SovereignAgent:
         except Exception as e:
             log.error("Conversational reply failed: %s", e)
             return "I'm having trouble right now. Please try again."
+
+    # Keywords that indicate the user wants real tool execution, not planning
+    _TOOL_INTENT_KEYWORDS = [
+        # File system
+        "list", "show me", "what's in", "what files", "what folders",
+        "directory", "folder", "desktop", "ls ", "cat ", "read file",
+        "file system", "filesystem", "explore", "onboard", "scan",
+        "tree", "contents of", "look at", "check the", "open ",
+        # Shell / system
+        "run ", "execute", "terminal", "command", "shell",
+        "install", "pip ", "npm ", "git ", "docker", "python ",
+        "what's running", "process", "disk space", "memory usage",
+        "system info", "uname", "whoami", "hostname",
+        # Web
+        "search for", "look up", "google", "find me", "web search",
+        "what is", "who is", "fetch ", "download",
+        # Path references
+        "~/", "/home/", "/etc/", "/var/", "/tmp/",
+    ]
+
+    @classmethod
+    def _is_tool_intent(cls, text: str) -> bool:
+        """Detect if a message needs real tool execution (bypass planner)."""
+        lower = text.lower()
+        return any(kw in lower for kw in cls._TOOL_INTENT_KEYWORDS)
 
     _TOOL_PATTERN = re.compile(r"\[TOOL:(\w+)\](.*?)\[/TOOL\]", re.DOTALL)
     _MAX_REACT_ITERATIONS = 5

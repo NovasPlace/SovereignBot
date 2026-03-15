@@ -173,8 +173,8 @@ class Executor:
         if self._toolbelt:
             sid = (action.skill_id or "").lower()
             payload = action.payload or {}
-            log.debug("ToolBelt dispatch check: skill_id=%s payload_keys=%s",
-                       sid, list(payload.keys()))
+            log.info("ToolBelt dispatch check: skill_id=%s type=%s payload=%s",
+                       sid, action.type.value, payload)
 
             # File read: payload has path/file, or skill mentions file/read
             path = payload.get("path") or payload.get("file") or payload.get("filepath", "")

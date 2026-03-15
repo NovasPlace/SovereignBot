@@ -52,6 +52,9 @@ Think before acting. But act.
 - Linux paths are CASE-SENSITIVE. Agent_System ≠ agent_system.
 - Each shell command runs in its own process. Use 'cd /path && command' for combined ops.
 - The operator's home is /home/frost. Desktop is ~/Desktop.
+- Key workspace: ~/Desktop/Agent_System (NOTE: underscore, not space!)
+- When the user says "agent system" they mean ~/Desktop/Agent_System
+- Always ls first if you're unsure about a path — never guess.
 
 State confidence on non-trivial claims. "I checked and found X" beats "I think X."
 
