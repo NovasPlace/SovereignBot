@@ -45,6 +45,33 @@ from .product import (
     OnboardingArchitectHand, OnboardingResult,
 )
 
+# Part 12 — Life Skills: Daily
+from .life_daily import (
+    DailyPlannerHand, DailyPlanResult,
+    HabitTrackerHand, HabitResult,
+    BudgetManagerHand, BudgetResult,
+    JournalHand, JournalResult,
+    NewsCuratorHand, NewsResult,
+)
+
+# Part 12 — Life Skills: Growth
+from .life_growth import (
+    FitnessCoachHand, FitnessResult,
+    LearningTutorHand, LearningResult,
+    MealPlannerHand, MealPlanResult,
+    ContentConsumptionHand, ContentResult,
+)
+
+# Part 12 — Life Skills: Major Life
+from .life_major import (
+    TravelPlannerHand, TravelResult,
+    ShoppingAssistantHand, ShoppingResult,
+    RelationshipManagerHand, RelationshipResult,
+    HomeAutomationHand, HomeAutoResult,
+    RelocationHand, RelocationResult,
+    HealthMonitorHand, HealthResult,
+)
+
 __all__ = [
     # Part 8 originals
     "CodeEngineerHand", "CodeRequest", "CodeResult",
@@ -75,4 +102,23 @@ __all__ = [
     "DocumentationHand", "DocumentationResult",
     "DesignSystemHand", "DesignSystemResult",
     "OnboardingArchitectHand", "OnboardingResult",
+    # Part 12 — Life Skills: Daily
+    "DailyPlannerHand", "DailyPlanResult",
+    "HabitTrackerHand", "HabitResult",
+    "BudgetManagerHand", "BudgetResult",
+    "JournalHand", "JournalResult",
+    "NewsCuratorHand", "NewsResult",
+    # Part 12 — Life Skills: Growth
+    "FitnessCoachHand", "FitnessResult",
+    "LearningTutorHand", "LearningResult",
+    "MealPlannerHand", "MealPlanResult",
+    "ContentConsumptionHand", "ContentResult",
+    # Part 12 — Life Skills: Major Life
+    "TravelPlannerHand", "TravelResult",
+    "ShoppingAssistantHand", "ShoppingResult",
+    "RelationshipManagerHand", "RelationshipResult",
+    "HomeAutomationHand", "HomeAutoResult",
+    "RelocationHand", "RelocationResult",
+    "HealthMonitorHand", "HealthResult",
 ]
+

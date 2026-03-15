@@ -410,6 +410,15 @@ async def main() -> None:
         InvoiceHand, CompetitiveIntelHand, SEOOptimizerHand, LegalDrafterHand,
         # Part 11 — Product
         DocumentationHand, DesignSystemHand, OnboardingArchitectHand,
+        # Part 12 — Life Skills: Daily
+        DailyPlannerHand, HabitTrackerHand, BudgetManagerHand,
+        JournalHand, NewsCuratorHand,
+        # Part 12 — Life Skills: Growth
+        FitnessCoachHand, LearningTutorHand, MealPlannerHand,
+        ContentConsumptionHand,
+        # Part 12 — Life Skills: Major Life
+        TravelPlannerHand, ShoppingAssistantHand, RelationshipManagerHand,
+        HomeAutomationHand, RelocationHand, HealthMonitorHand,
     )
     from .hand_router import HandRouter
 
@@ -460,6 +469,40 @@ async def main() -> None:
         "documentation": DocumentationHand(tools=tool_belt, llm_fn=routed_llm_fn),
         "design_system": DesignSystemHand(tools=tool_belt, llm_fn=routed_llm_fn),
         "onboarding": OnboardingArchitectHand(tools=tool_belt, llm_fn=routed_llm_fn),
+        # Part 12 — Life Skills: Daily
+        "daily_planner": DailyPlannerHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                           temporal=temporal, store=store),
+        "habit_tracker": HabitTrackerHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                          store=store),
+        "budget": BudgetManagerHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                     store=store),
+        "journal": JournalHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                store=store),
+        "news_curator": NewsCuratorHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                         store=store),
+        # Part 12 — Life Skills: Growth
+        "fitness": FitnessCoachHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                     store=store),
+        "learning": LearningTutorHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                       store=store),
+        "meal_planner": MealPlannerHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                         store=store),
+        "content": ContentConsumptionHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                           store=store),
+        # Part 12 — Life Skills: Major Life
+        "travel": TravelPlannerHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                     temporal=temporal, store=store,
+                                     send_approval_fn=_hand_approve),
+        "shopping": ShoppingAssistantHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                           store=store),
+        "relationships": RelationshipManagerHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                                  temporal=temporal, store=store),
+        "home_auto": HomeAutomationHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                         store=store),
+        "relocation": RelocationHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                      temporal=temporal, store=store),
+        "health": HealthMonitorHand(tools=tool_belt, llm_fn=routed_llm_fn,
+                                     temporal=temporal, store=store),
     }
 
     hand_router = HandRouter(workdir=os.path.expanduser("~/Desktop/Agent_System"))

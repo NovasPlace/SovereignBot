@@ -133,6 +133,84 @@ _TRIGGERS: dict[str, list[str]] = {
         "onboarding flow", "user journey", "first-time experience",
         "tutorial", "walkthrough flow", "user onboarding",
     ],
+    # ── Part 12: Life Skills — Daily ─────────────────────────────────
+    "daily_planner": [
+        "plan my day", "what should I do today", "daily plan",
+        "what's on my plate", "priorities today", "schedule my day",
+        "morning plan", "today's agenda",
+    ],
+    "habit_tracker": [
+        "habit", "streak", "I did my", "I skipped",
+        "track my", "did I", "how many days", "habit check",
+        "habit status", "log habit",
+    ],
+    "budget": [
+        "spent", "bought", "cost", "budget", "expense",
+        "how much did I spend", "monthly spending", "receipt",
+        "log expense", "financial report", "money tracker",
+    ],
+    "journal": [
+        "journal", "reflect", "how was my day", "write about",
+        "monthly review", "looking back", "journal prompt",
+        "daily reflection", "journaling",
+    ],
+    "news_curator": [
+        "news", "what's happening", "headlines", "briefing",
+        "catch me up", "what did I miss", "daily news",
+        "news digest", "current events",
+    ],
+    # ── Part 12: Life Skills — Growth ────────────────────────────────
+    "fitness": [
+        "workout", "exercise", "gym", "run", "lift",
+        "fitness", "sore", "rest day", "gains",
+        "workout plan", "fitness plan",
+    ],
+    "learning": [
+        "learn", "study", "teach me", "quiz me", "explain",
+        "course", "understand", "curriculum",
+        "learning path", "tutor",
+    ],
+    "meal_planner": [
+        "meal plan", "dinner", "recipe", "grocery", "what to eat",
+        "cook", "ingredients", "hungry", "meal prep",
+        "grocery list", "weekly meals",
+    ],
+    "content": [
+        "save this article", "reading list", "watch later",
+        "podcast", "book recommendation", "summarize this",
+        "watch list", "saved articles",
+    ],
+    # ── Part 12: Life Skills — Major Life ────────────────────────────
+    "travel": [
+        "trip", "vacation", "travel", "flight", "hotel",
+        "where should I go", "itinerary", "packing list",
+        "plan a trip", "travel plan",
+    ],
+    "shopping": [
+        "buy", "purchase", "looking for", "best product",
+        "recommend a", "compare products", "review",
+        "deal", "price check", "wishlist",
+    ],
+    "relationships": [
+        "birthday", "anniversary", "gift idea", "check in with",
+        "haven't talked to", "contact list", "friend",
+        "gift suggestion", "important date",
+    ],
+    "home_auto": [
+        "lights", "thermostat", "smart home", "automation",
+        "routine", "turn on", "turn off", "lock door",
+        "home automation", "smart devices",
+    ],
+    "relocation": [
+        "moving", "relocate", "new city", "apartment",
+        "neighborhood", "cost of living", "moving checklist",
+        "move to", "compare cities",
+    ],
+    "health": [
+        "symptom", "medication", "doctor", "appointment",
+        "headache", "feeling sick", "medicine reminder",
+        "health log", "track symptom",
+    ],
 }
 
 
