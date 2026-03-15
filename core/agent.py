@@ -370,6 +370,9 @@ class SovereignAgent:
         else:
             reply = await self._synthesize_with_llm(actions, results, clean_text)
 
+        # Strip any leaked [TOOL:] markers — defense in depth
+        reply = self._TOOL_PATTERN.sub("", reply).strip()
+
         # 6. Store in rolling session + long-term memory
         self._session.add_user(clean_text)
         self._session.add_agent(reply)
