@@ -18,6 +18,7 @@ Environment variables:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import pathlib
@@ -51,11 +52,34 @@ _load_env()
 # ── Logging ────────────────────────────────────────────────────────────────────
 
 log_level = os.environ.get("SOVEREIGN_LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format="%(asctime)s  %(name)-35s %(levelname)-8s %(message)s",
+_log_fmt = logging.Formatter(
+    "%(asctime)s  %(name)-35s %(levelname)-8s %(message)s",
     datefmt="%H:%M:%S",
 )
+
+# Console handler — shows sovereign.* at configured level
+_console = logging.StreamHandler()
+_console.setLevel(getattr(logging, log_level, logging.INFO))
+_console.setFormatter(_log_fmt)
+
+# File handler — rotating, 5 MB × 3 backups, captures everything at DEBUG
+from logging.handlers import RotatingFileHandler
+_log_path = pathlib.Path(__file__).parent / "daemon.log"
+_file_handler = RotatingFileHandler(
+    _log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
+)
+_file_handler.setLevel(logging.DEBUG)
+_file_handler.setFormatter(_log_fmt)
+
+logging.root.setLevel(logging.DEBUG)
+logging.root.addHandler(_console)
+logging.root.addHandler(_file_handler)
+
+# Silence noisy third-party loggers that drown out real signals
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
 log = logging.getLogger("sovereign.daemon")
 
 # ── Imports ────────────────────────────────────────────────────────────────────
@@ -74,32 +98,94 @@ def _make_ollama_fn(base_url: str, model: str):
     Does NOT force JSON format — the planner handles its own JSON extraction
     with a 3-strategy parser. Conversational replies need natural language.
     """
-    import json as _json
-    import urllib.request as _req
+    try:
+        import json as _json
+        import urllib.request as _req
 
-    async def _call(system: str, user: str) -> str:
-        payload = _json.dumps({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            "stream": False,
-        }).encode()
-        request = _req.Request(
-            f"{base_url}/api/chat",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(
-            None,
-            lambda: _req.urlopen(request, timeout=120).read(),
-        )
-        return _json.loads(raw)["message"]["content"]
+        async def _call(system: str, user: str) -> str:
+            try:
+                payload = _json.dumps({
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": user},
+                    ],
+                    "stream": False,
+                }).encode()
+                request = _req.Request(
+                    f"{base_url}/api/chat",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                loop = asyncio.get_event_loop()
+                raw = await loop.run_in_executor(
+                    None,
+                    lambda: _req.urlopen(request, timeout=60).read(),
+                )
+                return _json.loads(raw)["message"]["content"]
+            except (json.JSONDecodeError, Exception) as exc:
+                log.warning("_call: parse failed: %s", exc)
+                return None
 
-    return _call
+        return _call
+    except (json.JSONDecodeError, Exception) as exc:
+        log.warning("_make_ollama_fn: parse failed: %s", exc)
+        return None
+
+
+def _make_ollama_structured_fn(base_url: str, model: str):
+    """Ollama structured inference — grammar-constrained via JSON Schema.
+
+    Accepts an optional format_schema dict. When provided, Ollama internally
+    generates a GBNF grammar from the schema and constrains token generation
+    so the output MUST conform to the schema. No invalid JSON possible.
+
+    When format_schema is None, behaves identically to _make_ollama_fn.
+
+    Usage:
+        structured_llm = _make_ollama_structured_fn(url, model)
+        result = await structured_llm(system, user, format_schema={...})
+    """
+    try:
+        import json as _json
+        import urllib.request as _req
+
+        async def _call(system: str, user: str, format_schema: dict | None = None) -> str:
+            try:
+                body: dict = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": user},
+                    ],
+                    "stream": False,
+                }
+                if format_schema is not None:
+                    body["format"] = format_schema
+                    body["temperature"] = 0.3  # lower temp for structured decisions
+
+                payload = _json.dumps(body).encode()
+                request = _req.Request(
+                    f"{base_url}/api/chat",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                loop = asyncio.get_event_loop()
+                raw = await loop.run_in_executor(
+                    None,
+                    lambda: _req.urlopen(request, timeout=60).read(),
+                )
+                return _json.loads(raw)["message"]["content"]
+            except (json.JSONDecodeError, Exception) as exc:
+                log.warning("_call: parse failed: %s", exc)
+                return None
+
+        return _call
+    except (json.JSONDecodeError, Exception) as exc:
+        log.warning("_make_ollama_structured_fn: parse failed: %s", exc)
+        return None
 
 
 def _make_nim_fn(api_keys: list[str], model: str):
@@ -113,48 +199,55 @@ def _make_nim_fn(api_keys: list[str], model: str):
         SOVEREIGN_NIM_API_KEYS=nvapi-key1,nvapi-key2,...
         SOVEREIGN_MODEL=meta/llama-3.1-70b-instruct
     """
-    import json as _json
-    import urllib.request as _req
-    import itertools
-    import threading
+    try:
+        import json as _json
+        import urllib.request as _req
+        import itertools
+        import threading
 
-    NIM_BASE = "https://integrate.api.nvidia.com/v1"
-    _key_cycle = itertools.cycle(api_keys)
-    _key_lock = threading.Lock()
+        NIM_BASE = "https://integrate.api.nvidia.com/v1"
+        _key_cycle = itertools.cycle(api_keys)
+        _nim_key_lock = threading.Lock()
+        def _next_key() -> str:
+            with _nim_key_lock:
+                return next(_key_cycle)
 
-    def _next_key() -> str:
-        with _key_lock:
-            return next(_key_cycle)
+        async def _call(system: str, user: str) -> str:
+            try:
+                api_key = _next_key()
+                payload = _json.dumps({
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": user},
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 768,
+                }).encode()
+                request = _req.Request(
+                    f"{NIM_BASE}/chat/completions",
+                    data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    },
+                    method="POST",
+                )
+                loop = asyncio.get_event_loop()
+                raw = await loop.run_in_executor(
+                    None,
+                    lambda: _req.urlopen(request, timeout=60).read(),
+                )
+                resp = _json.loads(raw)
+                return resp["choices"][0]["message"]["content"]
+            except (json.JSONDecodeError, Exception) as exc:
+                log.warning("NIM _call failed: %s", exc)
+                return None
 
-    async def _call(system: str, user: str) -> str:
-        api_key = _next_key()
-        payload = _json.dumps({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            "temperature": 0.7,
-            "max_tokens": 2048,
-        }).encode()
-        request = _req.Request(
-            f"{NIM_BASE}/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
-        loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(
-            None,
-            lambda: _req.urlopen(request, timeout=30).read(),
-        )
-        resp = _json.loads(raw)
-        return resp["choices"][0]["message"]["content"]
-
-    return _call
+        return _call
+    except (json.JSONDecodeError, Exception) as exc:
+        log.warning("_make_nim_fn: parse failed: %s", exc)
+        return None
 
 
 def _make_llm_fn(ollama_url: str, model: str):
@@ -179,7 +272,7 @@ def _make_llm_fn(ollama_url: str, model: str):
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-async def main() -> None:
+async def main(stop_event: asyncio.Event | None = None) -> None:
     # ── Vault ──────────────────────────────────────────────────────────────────
     vault = get_vault()
     vault_pass = os.environ.get("SOVEREIGN_VAULT_PASS", "")
@@ -268,7 +361,8 @@ async def main() -> None:
     # Local model name may differ from NIM model name (e.g. "llama3.1:8b-instruct-q4_K_M" vs "meta/llama-3.1-70b-instruct")
     local_model = os.environ.get("SOVEREIGN_OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M")
     local_llm_fn = _make_ollama_fn(ollama_url, local_model)
-    log.info("IntelligenceRouter local brain: Ollama model=%s", local_model)
+    structured_llm_fn = _make_ollama_structured_fn(ollama_url, local_model)
+    log.info("IntelligenceRouter local brain: Ollama model=%s (structured=yes)", local_model)
     # NIM keys - router always has access to turbo regardless of provider setting
     _nim_keys_raw = os.environ.get("SOVEREIGN_NIM_API_KEYS") or os.environ.get("SOVEREIGN_NIM_API_KEY", "")
     _nim_keys = [k.strip() for k in _nim_keys_raw.split(",") if k.strip()]
@@ -289,10 +383,13 @@ async def main() -> None:
 
     # Wrap the router as an llm_fn-compatible async callable
     # The agent calls llm_fn(system=..., user=...) — router.route handles the rest
-    _default_user_id = list(allowed_ids)[0] if allowed_ids else "default"
+    # Mutable holder so routed_llm_fn always uses the current message's user_id.
+    # Updated by handle() each message — avoids closure capturing a static string.
+    _uid_holder: list[str] = [list(allowed_ids)[0] if allowed_ids else "default"]
+
     async def routed_llm_fn(system: str, user: str) -> str:
         result = await router.route(
-            user_id=_default_user_id,
+            user_id=_uid_holder[0],
             system=system,
             user=user,
         )
@@ -306,11 +403,12 @@ async def main() -> None:
     from .soul import SoulLayer
     from .notifications import NotificationSystem
     from .dreams import DreamCycle
+    from .meditation import MeditationCycle
     from .delegation import DelegationRouter
 
     heartbeat = Heartbeat()
     emotion_engine = EmotionEngine()
-    persona_engine = PersonaEngine()
+    persona_engine = PersonaEngine(store=store)
     metabolism = MetabolismPhases(emotion=emotion_engine)
     heartbeat.register_phase(metabolism.on_pulse)
 
@@ -323,6 +421,13 @@ async def main() -> None:
     # Dream cycle — memory consolidation during sleep
     dreams = DreamCycle(store, notification_system=notifs)
     heartbeat.register_phase(dreams.on_pulse)
+
+    # Meditation cycle — auto-triggers on sustained stress (agitated/vigilant mood)
+    meditation = MeditationCycle(
+        emotion_engine=emotion_engine,
+        working_memory=None,  # injected after working_memory organ loads
+    )
+    heartbeat.register_phase(meditation.on_pulse)
 
     # Multi-agent delegation — route complex tasks to bigger brains
     delegation = DelegationRouter(turbo_fn=turbo_llm_fn if _nim_keys else None)
@@ -390,7 +495,11 @@ async def main() -> None:
         channels=channels,
         membrane=membrane,
         quarantine=quarantine,
+        soma=None,  # injected after SomaDaemon starts (see below)
     )
+
+    # Grammar-constrained LLM for structured tool-call decisions in the ReAct loop
+    agent._structured_llm = structured_llm_fn
 
     # ── The Hands ─────────────────────────────────────────────────────────────
     from .toolbelt import ToolBelt
@@ -513,14 +622,218 @@ async def main() -> None:
     agent._toolbelt = tool_belt
     agent._executor._toolbelt = tool_belt  # bypass sandbox for file/shell/web
 
+    # ── Container Code Engineer — Docker-isolated coding agent ────────────────
+    # Wraps CodeEngineerHand. Complex tasks (multi-file, "build from scratch", etc.)
+    # spin up an ephemeral Docker container running Claude Opus 4.6 with GENOME.md.
+    # Simple/medium tasks still run inline via Ollama/NIM. Non-fatal if Docker absent.
+    try:
+        from .container_agent.orchestrator import ContainerOrchestrator
+        from .container_agent.hand_integration import ContainerCodeEngineer
+        from pathlib import Path
+
+        _genome_md = Path(__file__).resolve().parent.parent / "GEMINI.md"
+        _container_orch = ContainerOrchestrator(
+            genome_path=_genome_md if _genome_md.exists() else Path(__file__).resolve().parent / "GENOME.md",
+        )
+        # Wrap the existing code_engineer hand
+        hands["code_engineer"] = ContainerCodeEngineer(
+            orchestrator=_container_orch,
+            existing_hand=hands["code_engineer"],
+            brain=agent._brain,
+            telegram_send=send_fn,
+        )
+        log.info("Container Code Engineer ready — Opus 4.6 on demand (Docker required)")
+    except Exception as _ce:
+        log.warning("Container Code Engineer skipped (Docker not ready): %s", _ce)
+
+    # ── Connector Ecosystem — external service integrations ───────────────────
+    # Loads connectors (GitHub, Discord, Notion, Upwork, Stripe, Linear)
+    # Each authenticates via vault credentials. Missing creds = connector skipped.
+    try:
+        from .connectors.wire import wire_connectors
+        from .security.dna import get_dna_manager
+
+        dna = get_dna_manager()
+        connector_registry = await wire_connectors(
+            toolbelt=tool_belt,
+            store=store,
+            membrane=membrane,
+            trace=trace,
+            dna=dna,
+            vault=vault,
+        )
+        agent._connector_registry = connector_registry
+        total_actions = sum(len(c.actions) for c in connector_registry.connectors.values())
+        log.info(
+            "Connector registry ready: %d connectors, %d actions",
+            len(connector_registry.connectors), total_actions,
+        )
+    except Exception as e:
+        log.warning("Connector ecosystem skipped: %s", e)
+        agent._connector_registry = None
+
+    # ── Organism Embed — fuse Agent_System in-process ──────────────────────────
+    # Imports and boots in-process organs (Cortex, IonicHalo, Spectra, Oracle, etc.)
+    # and launches managed fleet daemons as supervised subprocesses.
+    # Non-fatal: if any organ import fails it logs a warning and skips it.
+    from .organism_embed import EmbeddedOrganism
+    organism = EmbeddedOrganism()
+    embed_ok = await organism.boot()
+    if embed_ok:
+        agent._organism = organism
+        
+        # Wire OrgTols to expose organism organs to LLM ToolBelt
+        try:
+            from .orgtols import register_orgtols
+            register_orgtols(tool_belt, organism)
+        except Exception as oe:
+            log.warning("OrgTol registration failed: %s", oe)
+            
+        asyncio.create_task(organism.supervise(), name="organism_supervisor")
+
+        # Wire CortexDB binding into toolbelt — with retry since CortexDB
+        # may not be ready immediately after the daemon subprocess starts.
+        async def _wire_cortexdb_when_ready() -> None:
+            from .bindings import CortexDB
+            import os
+            cortexdb_url = os.environ.get("CORTEXDB_URL", "http://localhost:3456")
+            cx = CortexDB(cortexdb_url)
+            for attempt in range(12):  # up to 60s of retries
+                await asyncio.sleep(5)
+                if await cx.ping():
+                    if hasattr(agent, "_toolbelt"):
+                        agent._toolbelt._cortexdb = cx
+                    if hasattr(organism, "__dict__"):
+                        organism.cortexdb_api = cx
+                    agent._organism = organism
+                    log.info("CortexDB wired into memory_recall tool (attempt %d)", attempt + 1)
+                    return
+            log.warning("CortexDB wiring failed after 12 attempts — memory recall limited to PostgreSQL")
+
+        asyncio.create_task(_wire_cortexdb_when_ready(), name="cortexdb_wire")
+        log.info(
+            "Organism embedded — %d organs direct in-process access",
+            organism.organ_count,
+        )
+    else:
+        log.warning("Organism embed failed — running without in-process organs")
+        agent._organism = None
+
     channel._resolve_fn = agent.resolve_approval
+    agent._send_approval = channel.send_approval_prompt  # for web_browse inline buttons
     # Wire organism introspection for /commands
     channel._heartbeat = heartbeat
+    channel._meditation = meditation
     channel._hands_dict = hands
     channel._store = store
     channel._proprioception = proprioception
+    channel._persona_engine = persona_engine  # for _on_location geolocation storage
+    channel._skill_registry = registry         # for /clawhub command
+    channel._agent = agent                     # for /fleet organism access
+
+    # ── Evolution System (self-improvement loop) ──────────────────────────────
+    try:
+        from .container_agent.orchestrator import ContainerOrchestrator
+        from .evolution.orchestrator import EvolutionOrchestrator
+        from .evolution.patcher import EvolutionPatcher
+        from .evolution.failure_collector import FailureCollector
+
+        container_orch = ContainerOrchestrator()
+        evo_patcher = EvolutionPatcher()
+        failure_collector = FailureCollector()
+
+        evo_orchestrator = EvolutionOrchestrator(
+            container_orchestrator=container_orch,
+            send_fn=send_fn,
+            operator_id=str(_uid_holder[0]),
+            patcher=evo_patcher,
+            failure_collector=failure_collector,
+        )
+        channel._evolution_orchestrator = evo_orchestrator
+
+        # Wire heartbeat tick — fires autonomous evolution during idle
+        heartbeat.register_phase(evo_orchestrator.heartbeat_tick)
+
+        # Expose failure_collector for error-path hooks anywhere in the daemon
+        channel._failure_collector = failure_collector
+
+        log.info(
+            "Evolution system wired — /evolve command active | "
+            "auto-evolve after %d idle pulses (~%d min)",
+            180, 30,
+        )
+    except Exception as e:
+        log.warning("Evolution system unavailable: %s", e)
+        channel._evolution_orchestrator = None
+        channel._failure_collector = None
+
+    # ── Sovereign Substrate ────────────────────────────────────────────────────
+    # Connect to the shared substrate so Sovereign's events appear in the
+    # ledger, shared state goes on the blackboard, and the agent shows up
+    # in the registry for any other connected agents to see.
+    _sub = None
+    try:
+        import sys as _sys
+        _agent_root = pathlib.Path(__file__).resolve().parent.parent
+        if str(_agent_root) not in _sys.path:
+            _sys.path.insert(0, str(_agent_root))
+        from substrate import connect as _substrate_connect
+        _sub = _substrate_connect(
+            agent_id="sovereign",
+            model=os.environ.get("SOVEREIGN_LLM_PROVIDER", "ollama"),
+            ide="sovereign",
+            axiom_file="sovereign-v1",
+            capabilities=["telegram", "browser", "code", "planning"],
+        )
+        _sub.set_task("Listening on Telegram")
+        log.info("Substrate connection established — sovereign is on the grid")
+    except Exception as _se:
+        log.info("Substrate not available (will run standalone): %s", _se)
+        _sub = None
+    channel._substrate = _sub
+
+    # ── Soma Daemon (computational proprioception) ─────────────────────────────
+    try:
+        from .soma_daemon import SomaDaemon
+        soma = SomaDaemon(emotion_engine=emotion_engine, store=store)
+        soma.start()
+        channel._soma = soma
+        agent._soma = soma   # inject into agent for prompt context
+        log.info("SomaDaemon online — 12-dim somatic state vector active")
+    except Exception as e:
+        log.warning("SomaDaemon unavailable: %s", e)
+        channel._soma = None
+
+    # ── Drift Daemon (configuration integrity) ─────────────────────────────────
+    try:
+        from .drift_daemon import DriftDaemon
+        base_path = pathlib.Path(__file__).parent
+        drift = DriftDaemon(base_path=base_path, quarantine_sys=quarantine)
+        _ = drift.start()
+        log.info("DriftDaemon online — watching critical configuration files for drift")
+    except Exception as e:
+        log.warning("DriftDaemon unavailable: %s", e)
+
+    # ── Circadian Daemon (metabolic sleep cycles) ──────────────────────────────
+    try:
+        from .circadian_daemon import CircadianDaemon
+        circadian = CircadianDaemon(heartbeat=heartbeat, sleep_start_hour=1, sleep_end_hour=8)
+        _ = circadian.start()
+        log.info("CircadianDaemon online — biological clock actively throttling metabolism")
+    except Exception as e:
+        log.warning("CircadianDaemon unavailable: %s", e)
+
+    # ── Organ Bridges (manifest-driven) ─────────────────────────────────────────
+    from .organ_manifest import DAEMON_BRIDGES, load_bridge
+    _bridges_loaded = 0
+    for _bridge_spec in DAEMON_BRIDGES:
+        if load_bridge(_bridge_spec, agent, heartbeat, session_id=session_id):
+            _bridges_loaded += 1
+    log.info("Organ bridges loaded: %d/%d", _bridges_loaded, len(DAEMON_BRIDGES))
 
     # ── Part 9: Voice Layer ────────────────────────────────────────────────────
+
+
     from .voice import EarSystem, VoiceSystem
 
     ear = EarSystem(store=store, emotion_engine=emotion_engine)
@@ -543,6 +856,16 @@ async def main() -> None:
     async def _wait_approval_fn(action_id: str) -> bool:
         return await agent.wait_for_approval(action_id)
 
+    # Build browser orchestrator for actual Freelancer bid submission
+    _browser_orch = None
+    try:
+        from .browser_agent.orchestrator import BrowserOrchestrator as _BO
+        from pathlib import Path as _Path
+        _browser_orch = _BO(vault=vault)
+        log.info("Browser Agent ready — Playwright+Chromium on demand (Docker required)")
+    except Exception as _be:
+        log.warning("Browser Agent skipped (Docker not ready): %s", _be)
+
     economy = EconomyEngine(
         store=store,
         llm_fn=routed_llm_fn,
@@ -552,7 +875,9 @@ async def main() -> None:
         send_approval_fn=_send_approval_fn,
         wait_approval_fn=_wait_approval_fn,
         hands=hands,
-        operator_id=_default_user_id,
+        operator_id=_uid_holder[0],
+        vault=vault,
+        browser_orchestrator=_browser_orch,
         config={
                 "enabled_platforms": [
                     "freelancer",   # active — SOVEREIGN_FREELANCER_KEY set
@@ -580,6 +905,18 @@ async def main() -> None:
     asyncio.ensure_future(dash_mod.start_dashboard(port=8800))
     log.info("Status dashboard ready (http://localhost:8800)")
 
+    # ── Webhook System ─────────────────────────────────────────────────────────
+    try:
+        from . import webhooks as wh_mod
+        wh_mod.wire(
+            operator_id=int(os.environ.get("SOVEREIGN_ALLOWED_USERS", "0").split(",")[0].strip()),
+            agent_inbox=send_fn,
+            store=store,
+        )
+        log.info("Webhook system ready — POST http://localhost:8800/webhook/{slug}")
+    except Exception as e:
+        log.warning("Webhook system failed to wire: %s", e)
+
     # ── Cross-Hand Chaining ───────────────────────────────────────────────────
     from .hand_chain import HandChainExecutor
     chain_executor = HandChainExecutor(hands=hands, send_fn=send_fn)
@@ -606,6 +943,129 @@ async def main() -> None:
     heartbeat.register_phase(proactive.on_pulse)
     log.info("Proactive loop registered — organism will now initiate contact")
 
+    # ── Autonomous Executor — "go do this" upgrade ─────────────────────────────
+    # Wires all 5 autonomy upgrades: persistent task queue, tool verification,
+    # action-approval gate, task scratchpad, and hierarchical goal decomposer.
+    try:
+        from .upgrades.sovereign_adapter import build_executor
+        autonomous_executor = build_executor(
+            agent=agent,
+            send_fn=send_fn,
+            operator_id=operator_id,
+        )
+        agent._autonomous_executor = autonomous_executor
+
+        # Register heartbeat maintenance (expire stale approvals/tasks)
+        async def _autonomous_maintenance(pulse_count: int, state) -> None:
+            await autonomous_executor.on_heartbeat(pulse_count, str(state))
+        heartbeat.register_phase(_autonomous_maintenance)
+
+        # Wire approval gate response handler into the Telegram channel
+        # The gate's handle_response is called when an operator replies YES/NO
+        _orig_handle = getattr(channel, "_handle_approval_text", None)
+        async def _gate_response_interceptor(text: str, user_id: int) -> str | None:
+            result = await autonomous_executor.gate.handle_response(text, user_id)
+            if result:
+                return result
+            if _orig_handle:
+                return await _orig_handle(text, user_id)
+            return None
+        channel._gate_response_fn = _gate_response_interceptor
+
+        # Resume any tasks that were mid-execution when the bot last restarted
+        async def _resume_interrupted() -> None:
+            resumed = await autonomous_executor.resume_on_boot()
+            if resumed:
+                log.info("Autonomous executor resumed %d interrupted tasks", len(resumed))
+        asyncio.create_task(_resume_interrupted(), name="autonomous_resume")
+
+        log.info("Autonomous executor ready (persistent queue, verification, approval gate, scratchpad, decomposer)")
+    except Exception as _ae:
+        log.warning("Autonomous executor skipped: %s", _ae)
+        agent._autonomous_executor = None
+
+    # ── ALEPH Topology Beacon ──────────────────────────────────────────────────
+    async def _beacon_heartbeat_loop() -> None:
+        import httpx, datetime
+        from .aleph.models import BeaconPayload
+        from .aleph.routes import NODE_ID, OPERATOR, NODE_URL, CAPABILITIES
+        
+        sequence_num = 0
+        cache = {"corpus_size": 0}
+        boot_time = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        is_local = "localhost" in NODE_URL or "127.0.0.1" in NODE_URL
+        if is_local:
+            log.info("ALEPH Beacon: Localhost mode (%s) - skipping federated broadcast", NODE_URL)
+        else:
+            log.info("ALEPH Beacon: Federated mode (%s) - mesh broadcasting active", NODE_URL)
+        
+        while not stop_event.is_set():
+            try:
+                sequence_num += 1
+                
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        r = await client.post(f"http://localhost:8800/aleph/v1/query", json={"query": "module", "limit": 1})
+                        if r.status_code == 200:
+                            cache["corpus_size"] = r.json().get("total", 0)
+                except Exception:
+                    pass
+                
+                payload = BeaconPayload(
+                    node_id=NODE_ID,
+                    operator=OPERATOR,
+                    endpoint=NODE_URL,
+                    capabilities=CAPABILITIES,
+                    standing=42, # Fixed rank for bootstrap v0.1
+                    corpus_size=cache["corpus_size"],
+                    online_since=boot_time,
+                    ttl=300,
+                    beacon_seq=sequence_num,
+                    signature="ed25519:stub"
+                )
+                
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    try:
+                        # 1. Update our own local topology (always happens)
+                        await client.post(
+                            f"http://localhost:8800/aleph/v1/beacon", 
+                            json=payload.model_dump()
+                        )
+                    except Exception as pe:
+                        log.debug(f"Beacon local heartbeat failed: %s", pe)
+                        
+                    # 2. If configured with a public URL, broadcast to the federated mesh
+                    if not is_local:
+                        try:
+                            topo_r = await client.get("http://localhost:8800/aleph/v1/topology")
+                            if topo_r.status_code == 200:
+                                peers = topo_r.json().get("nodes", [])
+                                for peer in peers:
+                                    peer_url = peer.get("endpoint")
+                                    # Don't beacon to ourselves over the network loop
+                                    if peer_url and peer_url != NODE_URL:
+                                        try:
+                                            await client.post(
+                                                f"{peer_url.rstrip('/')}/aleph/v1/beacon", 
+                                                json=payload.model_dump()
+                                            )
+                                            log.debug(f"ALEPH: Announced to peer {peer_url}")
+                                        except Exception as fwe:
+                                            log.debug(f"ALEPH: Broadcast failed for {peer_url} - {fwe}")
+                        except Exception as te:
+                            log.debug(f"ALEPH: Topology fetch failed during broadcast - {te}")
+                        
+            except Exception as e:
+                log.error("Beacon heartbeat loop error: %s", e)
+                
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=150.0)
+            except asyncio.TimeoutError:
+                pass
+
+    _beacon_task = asyncio.create_task(_beacon_heartbeat_loop(), name="aleph_beacon")
+
     # ── Connect and run ────────────────────────────────────────────────────────
     await channel.connect()
     heartbeat.start()  # the organism is now alive
@@ -618,33 +1078,102 @@ async def main() -> None:
 
     halo.increment("messages_handled", 0)  # register counter
 
-    try:
+    async def _receive_loop() -> None:
         async for msg in channel.receive():
             heartbeat.on_user_activity()  # wake the organism
-            response = await agent.handle(msg)
-            await channel.send(msg.user_id, response)
+            try:
+                _uid_holder[0] = str(msg.user_id)  # update routing context per-message
+                response = await agent.handle(msg)
+                await channel.send(msg.user_id, response)
+            except Exception as exc:
+                log.error(
+                    "Message handler crashed (user=%s): %s",
+                    msg.user_id, exc, exc_info=True,
+                )
+                try:
+                    await channel.send(
+                        msg.user_id,
+                        "⚠️ Something went wrong processing that message. "
+                        "The error has been logged.",
+                    )
+                except Exception:
+                    pass  # don't crash the loop trying to report the crash
             halo.increment("messages_handled")
             spectra.report_health(1.0)  # still healthy after handling a message
+
+    # Race the receive loop against the stop event (SIGINT/SIGTERM)
+    _recv_task = asyncio.ensure_future(_receive_loop())
+    _stop_task = asyncio.ensure_future(
+        (stop_event.wait() if stop_event else asyncio.sleep(1e9))
+    )
+
+    try:
+        done, pending = await asyncio.wait(
+            [_recv_task, _stop_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        # Propagate any unexpected exception from receive loop
+        for task in done:
+            if task is _recv_task and not task.cancelled():
+                exc = task.exception()
+                if exc:
+                    log.error("Receive loop exited with error: %s", exc)
     except asyncio.CancelledError:
         pass
     finally:
+        _recv_task.cancel()
+        _stop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await asyncio.gather(_recv_task, _stop_task, return_exceptions=True)
+        heartbeat.stop()
         halo.stop()
         await channel.disconnect()
+        # Gracefully stop organism — flushes Cortex, stops daemons
+        if agent._organism:
+            await agent._organism.shutdown()
         log.info("Sovereign shut down cleanly")
 
 
 def run() -> None:
+    """Boot the event loop with a graceful-shutdown signal handler.
+
+    Uses asyncio.Event instead of loop.stop() so signals never yank the
+    rug out from under a running coroutine (avoids RuntimeError: Event loop
+    stopped before Future completed).
+    """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    # Catch unhandled exceptions in fire-and-forget coroutines
+    # (heartbeat phases, organ bridges, background tasks)
+    def _loop_exception_handler(loop, context):
+        exc = context.get("exception")
+        msg = context.get("message", "Unhandled async exception")
+        if exc:
+            log.error("Asyncio exception: %s — %s", msg, exc, exc_info=exc)
+        else:
+            log.error("Asyncio exception: %s", msg)
+
+    loop.set_exception_handler(_loop_exception_handler)
+
+    _stop_event = asyncio.Event()
+
+    def _request_shutdown() -> None:
+        log.info("Shutdown signal received — stopping gracefully")
+        loop.call_soon_threadsafe(_stop_event.set)
+
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, loop.stop)
+        loop.add_signal_handler(sig, _request_shutdown)
 
     try:
-        loop.run_until_complete(main())
+        loop.run_until_complete(main(_stop_event))
     except KeyboardInterrupt:
         pass
     finally:
+        # Cancel any lingering tasks before closing
+        pending = asyncio.all_tasks(loop)
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.close()
 
 
